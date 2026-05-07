@@ -1,3 +1,6 @@
 [submodule "tools/asm8085"]
 	path = tools/asm8085
 	url = https://github.com/miscellus/asm8085.git
+[submodule "tools/Slappy"]
+	path = tools/Slappy
+	url = https://github.com/miscellus/Slappy.git

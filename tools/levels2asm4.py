@@ -115,9 +115,6 @@ for lname, grid in levels.items():
             # solid bit
             is_solid = 1 if 'solid' in tags else 0
 
-            # player
-            if 'player' in tags:
-                player_positions.append((x,y))
             # direction
             dir_val = 0
             for tname, val in dir_map.items():
@@ -139,6 +136,12 @@ for lname, grid in levels.items():
                     sys.exit(2)
                 idx = tile_index[tile_name]
                 all_referenced_tiles.setdefault(tile_name, idx)
+
+            # player
+            if 'player' in tags:
+                player_positions.append((x,y))
+                idx = tile_index['TileEmpty'] # @hack @hardcode TODO(jkk)
+
             if idx > 31:
                 print(f"Error: tile index {idx} for '{tile_name}' exceeds 31 (fits in 5 bits) in level '{lname}'", file=sys.stderr)
                 sys.exit(2)

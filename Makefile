@@ -7,7 +7,11 @@ ASM := $(ASMDIR)/$(ASMNAME)
 
 .PHONY: all clean
 
-all: $(SHIFTY)
+all: run
+
+.PHONY: send2emu
+send2emu: build/shifty.co
+	python tools/send2emu.py $(SHIFTY) --host localhost --port 9001
 
 $(SHIFTY): $(ASM) build src/shifty.s8085 src/tiles.s8085 src/levels.s8085 Makefile
 	$(ASM) -c -o $(SHIFTY) src/shifty.s8085
@@ -30,3 +34,7 @@ clean:
 	$(MAKE) -C $(ASMDIR) clean
 	rm -f $(ASM)
 	rm -rf build
+
+.PHONY: run
+run: $(SHIFTY)
+	tools/Slappy/slappy.exe -run-co-file $(SHIFTY)
