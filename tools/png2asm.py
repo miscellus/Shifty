@@ -10,6 +10,7 @@ import sys, os, re
 from PIL import Image
 
 def sanitize_label(name):
+    name = re.sub(r'^\s*\d*_*', '', name)
     name = re.sub(r'[^0-9A-Za-z_]', '_', name)
     if re.match(r'^[0-9]', name):
         name = '_' + name

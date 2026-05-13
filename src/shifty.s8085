@@ -81,7 +81,7 @@ PlayerMove:
 	call IsPosOutOfBounds
 	rc ; return with carry if the move should be cancelled
 
-	lxi h, Level.TileData
+	lxi h, Level.FG
 	call GetByteAtPos
 	mov b, a ; [B] = tile data
 
@@ -95,13 +95,13 @@ PlayerMove:
 	ani TileIndexMask
 	mov c, a ; [C] = tile index
 
-	mov a, c
-	cpi TileHole_Index
-	rz ; test
+	; mov a, c
+	; cpi TileHole_Index
+	; rz ; test
 
-	cpi TileCrateBox_Index
+	cpi TileCrateStone_Index
 	cz MoveBoxes
-	rc
+	; rc
 
 	; jz ; FORSÆT HER JAKOB
 
@@ -143,20 +143,15 @@ MoveBoxes:
 	  mov e, a
 
 	  ; For now, just push a single box at a time
-	  lxi h, Level.TileData
+	  lxi h, Level.FG
 	  ; [DE] = probe pos
 	  call GetByteAtPos
 	  mov c, a ; [C] = probed tile
-	  ani TileIndexMask
-	  cpi TileEmpty_Index
-	jz .canMove ;  based on cpi
+	  rlc
+	  jc .retCf
+	  rlc
+	  jc .retCf
 	; The tile was not empty, so return with CF to cancel move
-	pop h ; [HL] = @POP(box pos)
-	pop h
-	pop d
-	pop b
-	stc
-	ret
 
 .canMove:
 	; Ok the tile after the box was empty, move the box
@@ -167,12 +162,12 @@ MoveBoxes:
 	; [HL] = box pos
 	; [DE] = probe pos
 	; [B] = box tile
-	lxi h, Level.TileData
+	lxi h, Level.FG
 	call SetByteAtPos ; TODO: can we use the index versions to avoid recomputing the index
 
 	; Draw the new box location
 	di
-	lxi h, TileCrateBox ; @hardcode this should be dynamic based on what tile we just pushed.
+	lxi h, TileCrateStone ; @hardcode this should be dynamic based on what tile we just pushed.
 	; [DE] = probe pos
 	; [HL] = ptr to box tile bitmap
 	call DrawTile
@@ -183,7 +178,7 @@ MoveBoxes:
 	; TODO(jkk): For now we just swap
 	;
 	; [C] = probed tile
-	lxi h, Level.TileData
+	lxi h, Level.FG
 	pop d ; [DE] = @POP(box pos)
 	mov b, c ; [B] = probed tile
 	call SetByteAtPos
@@ -195,6 +190,14 @@ MoveBoxes:
 	pop d
 	pop b
 	ora a ; clear carry flag
+	ret
+
+.retCf:
+	pop h ; [HL] = @POP(box pos)
+	pop h
+	pop d
+	pop b
+	stc
 	ret
 
 ReadInput:
@@ -246,7 +249,7 @@ GameInit:
 	sta PlayerTileY
 
 	call SetInterruptMask_1d
-	lxi h, Level.TileData
+	lxi h, Level.FG
 	mvi d, 0 ; [D] = X = 0
 .drawLevelRows:
 	mvi e, 0 ; [E] = Y = 0
@@ -652,5 +655,6 @@ KeyboardRow6Pressed: ds 1
 Level:
 .PlayerStartY: ds 1
 .PlayerStartX: ds 1
-.TileData: ds 24*8
+.FG: ds 8*24
+.BG: ds 8*24
 LevelEnd:
