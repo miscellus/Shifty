@@ -63,13 +63,6 @@ TryGetNeigborPos:
 	call IsPosOutOfBounds
 	ret
 
-TryGetNeighborTile:
-	call TryGetNeigborPos
-	rc ; return with carry out of bounds and the move should be cancelled
-	call TileDataFromPos
-	ora a
-	ret
-
 PlayerMove:
 ; [C] = Direction (0 -> right, 1 -> up, 2 -> right, 3 -> down)
 ; Output:
@@ -79,9 +72,16 @@ PlayerMove:
 	lhld PlayerPos
 	xchg ; [D] = x, [E] = y
 
+	; call TileDataFromPos
+	; mov h, b
+	; mov l, c
+	; ; [H] =
+
 	mov a, c
-	call TryGetNeighborTile
+	call TryGetNeigborPos
 	rc ; return with carry out of bounds and the move should be cancelled
+
+	call TileDataFromPos
 	; [B] = Tile index
 	; [C] = Tile attrib
 	mov a, c
@@ -92,6 +92,8 @@ PlayerMove:
 
 	; Check for pushables
 	rlc ; [CF] = 1 means pushable [CF] = 0 means not pushable
+
+
 	rc ; REMOVE REMOVE REMOVE (just placeholder) - makes pushables solid
 
 	push d ; save new player pos
@@ -256,7 +258,7 @@ LoadLevel:
 	ret
 
 GameInit:
-	lxi h, LevelWithOneBox
+	lxi h, Level0
 	call LoadLevel
 
 	lda Level.PlayerStartX
