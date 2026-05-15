@@ -1,4 +1,5 @@
-TileIndexMask equ 0b00011111
+TileIndexMask       equ 0b00011111
+GroundTileIndexMask equ 0b00000011
 
 TargetNec equ 1
 ; TargetT100 equ 1
@@ -81,33 +82,19 @@ PlayerMove:
 	call IsPosOutOfBounds
 	rc ; return with carry if the move should be cancelled
 
-	lxi h, Level.FG
-	call GetByteAtPos
-	mov b, a ; [B] = tile data
+	call TileDataFromPos
+	; [B] = Tile index
+	; [C] = Tile attrib
+	mov a, c
 
+	; Check for solid
 	rlc ; [CF] = 1 means solid [CF] = 0 means not solid
 	rc ; return with carry if the move should be cancelled
 
-
 	; Check for pushables
-	; TODO(jkk): For now we only consider TileCrateBox pushable, but I think we want a bit for this
-	mov a, b ; restore tile data
-	ani TileIndexMask
-	mov c, a ; [C] = tile index
-
-	; mov a, c
-	; cpi TileHole_Index
-	; rz ; test
-
-	cpi TileCrateStone_Index
-	cz MoveBoxes
-	; rc
-
-	; jz ; FORSÆT HER JAKOB
-
-
-	; call IsSolidAtPos
-	; rc ; return with carry if the move should be cancelled
+	rlc ; [CF] = 1 means pushable [CF] = 0 means not pushable
+	rc ; REMOVE REMOVE REMOVE (just placeholder) - makes pushables solid
+	; cc MoveBoxes
 
 	push d ; save new player pos
 	di
@@ -123,82 +110,82 @@ PlayerMove:
 	ret
 
 
-MoveBoxes:
-; [D] = box x
-; [E] = box y
-; [B] = box tile data
-	push b
-	push d
-	push h
+; MoveBoxes:
+; ; [D] = box x
+; ; [E] = box y
+; ; [B] = box tile data
+; 	push b
+; 	push d
+; 	push h
 
-	; probe pos = box pos + delta
-	push d ; save box pos
-	  lhld PlayerDeltaPos ; [HL] = delta
-	  ; [DE] = box pos
-	  mov a, d
-	  add h
-	  mov d, a
-	  mov a, e
-	  add l
-	  mov e, a
+; 	; probe pos = box pos + delta
+; 	push d ; save box pos
+; 	  lhld PlayerDeltaPos ; [HL] = delta
+; 	  ; [DE] = box pos
+; 	  mov a, d
+; 	  add h
+; 	  mov d, a
+; 	  mov a, e
+; 	  add l
+; 	  mov e, a
 
-	  ; For now, just push a single box at a time
-	  lxi h, Level.FG
-	  ; [DE] = probe pos
-	  call GetByteAtPos
-	  mov c, a ; [C] = probed tile
-	  rlc
-	  jc .retCf
-	  rlc
-	  jc .retCf
-	; The tile was not empty, so return with CF to cancel move
+; 	  ; For now, just push a single box at a time
+; 	  lxi h, Level.TileData
+; 	  ; [DE] = probe pos
+; 	  call GetByteAtPos
+; 	  mov c, a ; [C] = probed tile
+; 	  rlc
+; 	  jc .retCf
+; 	  rlc
+; 	  jc .retCf
+; 	; The tile was not empty, so return with CF to cancel move
 
-.canMove:
-	; Ok the tile after the box was empty, move the box
+; .canMove:
+; 	; Ok the tile after the box was empty, move the box
 
-	;
-	; Set probe pos to box tile
-	;
-	; [HL] = box pos
-	; [DE] = probe pos
-	; [B] = box tile
-	lxi h, Level.FG
-	call SetByteAtPos ; TODO: can we use the index versions to avoid recomputing the index
+; 	;
+; 	; Set probe pos to box tile
+; 	;
+; 	; [HL] = box pos
+; 	; [DE] = probe pos
+; 	; [B] = box tile
+; 	lxi h, Level.TileData
+; 	call SetByteAtPos ; TODO: can we use the index versions to avoid recomputing the index
 
-	; Draw the new box location
-	di
-	lxi h, TileCrateStone ; @hardcode this should be dynamic based on what tile we just pushed.
-	; [DE] = probe pos
-	; [HL] = ptr to box tile bitmap
-	call DrawTile
-	ei
+; 	; Draw the new box location
+; 	di
+; 	lxi h, TileCrateStone ; @hardcode this should be dynamic based on what tile we just pushed.
+; 	; [DE] = probe pos
+; 	; [HL] = ptr to box tile bitmap
+; 	call DrawTile
+; 	ei
 
-	;
-	; Set old box pos to empty
-	; TODO(jkk): For now we just swap
-	;
-	; [C] = probed tile
-	lxi h, Level.FG
-	pop d ; [DE] = @POP(box pos)
-	mov b, c ; [B] = probed tile
-	call SetByteAtPos
+; 	;
+; 	; Set old box pos to empty
+; 	; TODO(jkk): For now we just swap
+; 	;
+; 	; [C] = probed tile
+; 	lxi h, Level.TileData
+; 	pop d ; [DE] = @POP(box pos)
+; 	mov b, c ; [B] = probed tile
+; 	call SetByteAtPos
 
-	; We don't need to draw an empty tile at old pos, because it will be overdrawn with the player.
+; 	; We don't need to draw an empty tile at old pos, because it will be overdrawn with the player.
 
-	; TODO(jkk): support box-trains (loop the above)
-	pop h
-	pop d
-	pop b
-	ora a ; clear carry flag
-	ret
+; 	; TODO(jkk): support box-trains (loop the above)
+; 	pop h
+; 	pop d
+; 	pop b
+; 	ora a ; clear carry flag
+; 	ret
 
-.retCf:
-	pop h ; [HL] = @POP(box pos)
-	pop h
-	pop d
-	pop b
-	stc
-	ret
+; .retCf:
+; 	pop h ; [HL] = @POP(box pos)
+; 	pop h
+; 	pop d
+; 	pop b
+; 	stc
+; 	ret
 
 ReadInput:
 ; Output:
@@ -248,16 +235,28 @@ GameInit:
 	lda Level.PlayerStartY
 	sta PlayerTileY
 
+
+;
+; FORSÆT HER JAKOB:
+;
+
 	call SetInterruptMask_1d
-	lxi h, Level.FG
+	lxi h, Level.TileData
 	mvi d, 0 ; [D] = X = 0
 .drawLevelRows:
 	mvi e, 0 ; [E] = Y = 0
 .drawLevelCols:
-	push h ; Save level offset
 
-	mov a, m
+	mov b, m ; Tile attrib + ground tile index
+	inx h
+	mov a, m ; Main tile index
+	inx h
 	ani TileIndexMask
+	jnz .skipGroundTileImage
+	mov a, b
+	ani GroundTileIndexMask
+.skipGroundTileImage:
+	push h ; Save level offset
 	call TilePtrFromIndex
 	mov b, h
 	mov c, l ; [BC] = TileIndex * 10
@@ -270,7 +269,6 @@ GameInit:
 	     ; lxi h, TileWallBrick
 	call DrawTile
 	pop h ; restore level offset
-	inx h ; next level tile
 	inr e ; next Y
 	mov a, e
 	cpi 8
@@ -320,6 +318,48 @@ SetByteAtIndex:
 	ret
 
 
+TileOffsetFromPos:
+; [D] = X pos (0 - 23)
+; [E] = Y pos (0 - 7)
+; -> [BC] = tile offset
+; Clobbers [A] [BC]
+	mov a, d
+	add a
+	add a
+	add a ; + X*8
+	add e ; + Y
+	add a ; * 2
+	mov c, a
+	mvi a, 0
+	adc a
+	mov b, a
+	ret
+
+TileAddressFromPos:
+	call TileOffsetFromPos
+
+	; intended fallthrough
+
+TileAddressFromOffset:
+; [BC] = tile offset
+; -> [HL] = tile data
+	lxi h, Level.TileData
+	dad b
+	ret
+
+TileDataFromPos:
+; [D] = X pos
+; [E] = Y pos
+; -> [BC] = Tile data
+; Clobbers [PSW] [A]
+	push h
+	call TileAddressFromPos
+	mov c, m
+	inx h
+	mov b, m
+	pop h
+	ret
+
 GetByteAtPos:
 ; [HL] = points to base of e.g. Level.TileData (or any uint8_t[8][24])
 ; [D] = X pos
@@ -353,25 +393,6 @@ IsPosOutOfBounds:
 	mov a, d ; check x
 	adi -24
 	ret
-
-IsSolidAtPos:
-; [HL] = points to base of e.g. Level.TileData (or any uint8_t[8][24])
-; [D] = X pos
-; [E] = Y pos
-; -> [CF] 1 if solid (or out of bounds)
-; Clobbers [A] [PSW]
-	call IndexFromPos
-
-	; intended fallthrough
-
-IsSolidAtIndex:
-; [HL] = points to base of e.g. Level.TileData
-; [A] = index
-; -> [CF] 1 if solid (or out of bounds)
-; Clobbers [A] [PSW]
-	call GetByteAtIndex
-	rlc ; rotate MSB (solid flag) into carry
-	ret ; done
 
 Draw:
 	call SetInterruptMask_1d
@@ -655,6 +676,5 @@ KeyboardRow6Pressed: ds 1
 Level:
 .PlayerStartY: ds 1
 .PlayerStartX: ds 1
-.FG: ds 8*24
-.BG: ds 8*24
+.TileData: ds 8*24*2
 LevelEnd:

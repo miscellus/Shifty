@@ -1,12 +1,12 @@
-. = TileEmpty #bg
-# = TileWallBrick #fg #solid
-@ = TileBoxKidDown #fg #player
-s = TileCrateStone #fg #push
-H = TileHole #bg
+. = TileEmpty
+# = TileWallBrick #solid
+@ = TileBoxKidDown #player
+s = TileCrateStone #pushable
+H = TileHole #pushable
 
 
 #solid = 0x80
-#push = 0x40
+#pushable = 0x40
 
 
 LevelWithOneBox
