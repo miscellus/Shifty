@@ -1,6 +1,11 @@
 TileIndexMask       equ 0b00011111
 GroundTileIndexMask equ 0b00000011
 
+DirectionRight equ 0
+DirectionUp    equ 1
+DirectionLeft  equ 2
+DirectionDown  equ 3
+
 TargetNec equ 1
 ; TargetT100 equ 1
 	include "hardware.s8085"
@@ -13,7 +18,7 @@ GameLoop:
 	rc
 
 	call ReadInput
-	jz GameLoop ; If none of the movement keys were pressed, jump back
+	jc GameLoop ; If none of the movement keys were pressed, jump back
 
 	call PlayerMove
 	jc GameLoop
@@ -21,68 +26,62 @@ GameLoop:
 	call Draw
 	jmp GameLoop
 
+
+TryGetNeigborPos:
+; [A] = direction (0-3)
+; [D] = X position
+; [E] = Y position
+; -> [D] = X neighbor position
+; -> [E] = Y neighbor position
+; -> [CF]	= 1 when out of bounds, 0 otherwise
+
+	cpi DirectionRight
+	jnz .skipRight
+	inr d
+	jmp .testBounds
+.skipRight:
+
+	cpi DirectionUp
+	jnz .skipUp
+	dcr e
+	jmp .testBounds
+.skipUp:
+
+	cpi DirectionLeft
+	jnz .skipLeft
+	dcr d
+	jmp .testBounds
+.skipLeft:
+
+	cpi DirectionDown
+	jnz .skipDown
+	inr e
+	jmp .testBounds
+.skipDown:
+
+.testBounds:
+	call IsPosOutOfBounds
+	ret
+
+TryGetNeighborTile:
+	call TryGetNeigborPos
+	rc ; return with carry out of bounds and the move should be cancelled
+	call TileDataFromPos
+	ora a
+	ret
+
 PlayerMove:
-; [B] = pressed key state
+; [C] = Direction (0 -> right, 1 -> up, 2 -> right, 3 -> down)
 ; Output:
 ;  CF = 1 if move was cancelled, 0 otherwise
 ; Clobbers: assume all
 
-	xra a
-	mov d, a ; zero [DE]
-	mov e, a
-
-	mov a, b ; restore pressed
-	ani KeyLeft
-	jz .leftNotPressed
-	dcr d
-.leftNotPressed:
-
-	mov a, b ; restore pressed
-	ani KeyRight
-	jz .rightNotPressed
-	inr d
-.rightNotPressed:
-
-	mov a, d
-	ora a
-	jnz .skipVertical
-
-	mov a, b ; restore pressed
-	ani KeyUp
-	jz .upNotPressed
-	dcr e
-.upNotPressed:
-
-	mov a, b ; restore pressed
-	ani KeyDown
-	jz .downNotPressed
-	inr e
-.downNotPressed:
-
-.skipVertical:
-
-	xchg
-	shld PlayerDeltaPos
-	xchg
-
-	; [DE] = relative movement
-
 	lhld PlayerPos
-	mov a, d
-	add h
-	mov h, a
-	mov a, e
-	add l
-	mov l, a
 	xchg ; [D] = x, [E] = y
 
-	; [DE] = new pos
-
-	; Check map boundary
-	call IsPosOutOfBounds
-	rc ; return with carry if the move should be cancelled
-
-	call TileDataFromPos
+	mov a, c
+	call TryGetNeighborTile
+	rc ; return with carry out of bounds and the move should be cancelled
 	; [B] = Tile index
 	; [C] = Tile attrib
 	mov a, c
@@ -94,7 +93,6 @@ PlayerMove:
 	; Check for pushables
 	rlc ; [CF] = 1 means pushable [CF] = 0 means not pushable
 	rc ; REMOVE REMOVE REMOVE (just placeholder) - makes pushables solid
-	; cc MoveBoxes
 
 	push d ; save new player pos
 	di
@@ -198,8 +196,40 @@ ReadInput:
 	sta KeyboardRow6Down
 	ana b
 	sta KeyboardRow6Pressed
-	ani KeyUp | KeyDown | KeyLeft | KeyRight
-	mov b, a
+	mov b, a ; [B] = key state
+	stc
+	rz ; Return with carry set if no movement key was pressed
+
+	ani KeyRight
+	jz .rightNotPressed
+	mvi c, DirectionRight
+.rightNotPressed:
+
+	mov a, b ; restore pressed
+
+	ani KeyUp
+	jz .upNotPressed
+	mvi c, DirectionUp
+.upNotPressed:
+
+	mov a, b ; restore pressed
+
+	ani KeyLeft
+	jz .leftNotPressed
+	mvi c, DirectionLeft
+.leftNotPressed:
+
+	mov a, b ; restore pressed
+
+	ani KeyDown
+	jz .downNotPressed
+	mvi c, DirectionDown
+.downNotPressed:
+
+	mov a, c
+	sta PlayerMoveDir
+
+	ora a
 	ret
 
 LoadLevel:
@@ -666,9 +696,11 @@ PlayerPos:
 PlayerTileY: ds 1
 PlayerTileX: ds 1
 
-PlayerDeltaPos:
-PlayerDeltaY: ds 1
-PlayerDeltaX: ds 1
+PlayerMoveDir: ds 1
+
+; PlayerDeltaPos:
+; PlayerDeltaY: ds 1
+; PlayerDeltaX: ds 1
 
 KeyboardRow6Down: ds 1
 KeyboardRow6Pressed: ds 1
