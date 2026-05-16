@@ -1,5 +1,7 @@
 TileIndexMask       equ 0b00011111
+TileIndexShift      equ 1
 GroundTileIndexMask equ 0b00000011
+NeedsRedrawMask     equ 0b00000001
 
 DirectionRight equ 0
 DirectionUp    equ 1
@@ -72,11 +74,6 @@ PlayerMove:
 	lhld PlayerPos
 	xchg ; [D] = x, [E] = y
 
-	; call TileDataFromPos
-	; mov h, b
-	; mov l, c
-	; ; [H] =
-
 	mov a, c
 	call TryGetNeigborPos
 	rc ; return with carry out of bounds and the move should be cancelled
@@ -92,19 +89,41 @@ PlayerMove:
 
 	; Check for pushables
 	rlc ; [CF] = 1 means pushable [CF] = 0 means not pushable
-
-
 	rc ; REMOVE REMOVE REMOVE (just placeholder) - makes pushables solid
 
-	push d ; save new player pos
-	di
-	lhld PlayerPos
-	xchg
-	lxi h, TileEmpty
-	call DrawTile
-	ei
-	pop h ; restore new player pos in HL
-	shld PlayerPos ; Save position that was previously in [DE]
+	;
+	; Commit move
+	;
+	push d ; Save new pos
+	  lhld PlayerPos ; [HL] = old pos
+	  xchg ; [DE] = old pos
+	  call TileAddressFromPos ; [HL] = address of old pos
+	  inx h
+	  mov a, m
+	  ani 0b11100000
+	  ori 1
+	  mov m, a
+	pop h ; restore [HL] = new pos
+
+	shld PlayerPos
+	xchg ; [DE] = new pos
+
+	call TileAddressFromPos
+	inx h
+	mov a, m
+	ani 0b11100000
+	ori (TileBoxKidDown_Index << 1) | 1
+	mov m, a
+
+	; push d ; save new player pos
+	; di
+	; lhld PlayerPos
+	; xchg
+	; lxi h, TileEmpty
+	; call DrawTile
+	; ei
+	; pop h ; restore new player pos in HL
+	; shld PlayerPos ; Save position that was previously in [DE]
 
 	ora a ; clear carry to indicate that the move was performed
 	ret
@@ -267,51 +286,6 @@ GameInit:
 	lda Level.PlayerStartY
 	sta PlayerTileY
 
-
-;
-; FORSÆT HER JAKOB:
-;
-
-	call SetInterruptMask_1d
-	lxi h, Level.TileData
-	mvi d, 0 ; [D] = X = 0
-.drawLevelRows:
-	mvi e, 0 ; [E] = Y = 0
-.drawLevelCols:
-
-	mov b, m ; Tile attrib + ground tile index
-	inx h
-	mov a, m ; Main tile index
-	inx h
-	ani TileIndexMask
-	jnz .skipGroundTileImage
-	mov a, b
-	ani GroundTileIndexMask
-.skipGroundTileImage:
-	push h ; Save level offset
-	call TilePtrFromIndex
-	mov b, h
-	mov c, l ; [BC] = TileIndex * 10
-
-	lxi h, Tiles
-	dad b
-	; [D] = X
-	; [E] = Y
-	; [HL] = TileOffset = Tiles + TileIndex
-	     ; lxi h, TileWallBrick
-	call DrawTile
-	pop h ; restore level offset
-	inr e ; next Y
-	mov a, e
-	cpi 8
-	jc .drawLevelCols
-	inr d
-	mov a, d
-	cpi 24
-	jc .drawLevelRows
-
-	call SetInterruptMask_09
-
 	call Draw
 	ret
 
@@ -428,11 +402,56 @@ IsPosOutOfBounds:
 
 Draw:
 	call SetInterruptMask_1d
+	lxi h, Level.TileData
+	mvi d, 0 ; [D] = X = 0
+.drawLevelRows:
+	mvi e, 0 ; [E] = Y = 0
+.drawLevelCols:
 
-	lhld PlayerPos
-	xchg
-	lxi h, TileBoxKidDown
-	call DrawTile
+	mov b, m ; Tile attrib + ground tile index
+	inx h
+	mov a, m ; tile index + redraw flag
+	rrc ; TileIndexShift
+	jc .needsRedraw
+	inx h ; Skip to next tile
+	jmp .continue
+.needsRedraw:
+
+	ani TileIndexMask
+	jnz .skipGroundTileImage
+	mov a, b
+	ani GroundTileIndexMask
+.skipGroundTileImage:
+
+	push h ; Save level offset
+	  call TilePtrFromIndex
+	  mov b, h
+	  mov c, l ; [BC] = TileIndex * 10
+
+	  lxi h, Tiles
+	  dad b
+	  ; [D] = X
+	  ; [E] = Y
+	  ; [HL] = TileOffset = Tiles + TileIndex
+	    ; lxi h, TileWallBrick
+	  call DrawTile
+	pop h ; restore level offset
+
+.clearRedrawFlag:
+	rlc
+	ani ~NeedsRedrawMask
+	mov m, a
+	inx h
+
+.continue:
+	inr e ; next Y
+	mov a, e
+	cpi 8
+	jc .drawLevelCols
+	inr d
+	mov a, d
+	cpi 24
+	jc .drawLevelRows
 
 	call SetInterruptMask_09
 	ret

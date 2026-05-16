@@ -1,13 +1,13 @@
-. = TileEmpty
-# = TileWallBrick #solid
-@ = TileBoxKidDown #player
-s = TileCrateStone #pushable
-h = TileHole #pushable
+. = TileEmpty #redraw
+# = TileWallBrick #solid #redraw
+@ = TileBoxKidDown #player #redraw
+s = TileCrateStone #pushable #redraw
+h = TileHole #pushable #redraw
 
 
-#solid = 0x80
-#pushable = 0x40
-
+#solid = 0x0080
+#pushable = 0x0040
+#redraw = 0x0100
 
 Level0
 ########################

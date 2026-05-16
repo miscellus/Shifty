@@ -117,6 +117,8 @@ def parse_input_with_tagmap(path: Path) -> Tuple[Dict[str, TileDef], Dict[str, i
                 if not (0 <= attr <= 0xFFFF):
                     raise ValueError(f"attribute value out of range: {val}")
                 tag_to_attr[tag] = attr
+
+            print(tag_to_attr)
         else:
             # no tag map: if next_line exists and is not a tag map, push it back into an iterator
             if next_line is not None:
@@ -194,7 +196,7 @@ def _emit_dw_words(out: List[str], label: Optional[str], words: List[int]) -> No
         out.append("    dw " + ", ".join(f"0x{w:04x}" for w in chunk))
 
 # --- new tile-word computation ---
-def compute_tile_word(td: TileDef, tag_to_attr: Dict[str, int], mapping_strategy: Optional[Callable[[int], int]] = None) -> int:
+def compute_tile_word(td: TileDef, tag_to_attr: Dict[str, int]) -> int:
     """
     Compute a 16-bit tile word for one tile definition according to the bitfield:
 
@@ -207,7 +209,7 @@ def compute_tile_word(td: TileDef, tag_to_attr: Dict[str, int], mapping_strategy
       Bits 12–15(4 bits): reserved2
 
     Mapping rules implemented:
-      - tileImage (bits 8–11) comes from the tile's asm index reduced to 4 bits via mapping_strategy.
+      - tileImage (bits 8–11) comes from the tile's asm index.
         Default mapping_strategy reduces via index % 16.
       - Exception: if the tile index is in 0..3 (a pure ground/background tile), tileImage is forced to 0
         and groundTileImage (bits 0–1) is set to that index.
@@ -219,61 +221,29 @@ def compute_tile_word(td: TileDef, tag_to_attr: Dict[str, int], mapping_strategy
       - Entries in tag_to_attr that map to these semantic tags are ignored for per-byte OR logic;
         if a tag->attr mapping exists for a known semantic tag and its bit value disagrees with the
         semantic bit, a warning is emitted and the semantic mapping is preferred.
-      - Any other tag_to_attr entries are currently ignored for tile-word bits (reserved/future use).
     """
-    if td.index is None:
-        raise RuntimeError(f"missing asm index for tile {td.name}")
-
-    idx = td.index
-    if mapping_strategy is None:
-        mapping_strategy = lambda v: v & 0xF  # default: modulo 16
 
     word = 0
 
+    if td.index is None:
+        raise RuntimeError(f"missing asm index for tile {td.name}")
+
     # groundTileImage bits 0-1 and tileImage bits 8-11
-    if 0 <= idx <= 3:
-        # pure ground/background tile
-        ground = idx & 0x3
+    if 0 <= td.index <= 3:
+        ground = td.index
         tile_image = 0
-        word |= ground  # bits 0-1
-        word |= (tile_image & 0xF) << 8
-    else:
+    elif 0 <= td.index <= 15:
         ground = 0
-        tile_image = mapping_strategy(idx) & 0xF
-        word |= ground
-        word |= (tile_image & 0xF) << 8
-
-    # tag-driven flags
-    # bit 7: isSolid
-    if 'solid' in td.tags:
-        word |= (1 << 7)
-        # if tag_to_attr has 'solid' mapped, warn if conflicting
-        if 'solid' in tag_to_attr:
-            mapped = tag_to_attr['solid']
-            expected = 1 << 7
-            if mapped != expected:
-                warnings.warn(
-                    f"tag->attr mapping for 'solid' ({mapped:#04x}) conflicts with semantic bit (0x{expected:02X}); semantic mapping used"
-                )
+        tile_image = td.index
     else:
-        # if tag_to_attr defines 'solid' but tile doesn't have tag, we don't set it
-        pass
+        raise RuntimeError(f"asm index {td.index} out of bounds for {td.name}")
 
-    # bit 6: isPushable
-    if 'pushable' in td.tags:
-        word |= (1 << 6)
-        if 'pushable' in tag_to_attr:
-            mapped = tag_to_attr['pushable']
-            expected = 1 << 6
-            if mapped != expected:
-                warnings.warn(
-                    f"tag->attr mapping for 'pushable' ({mapped:#04x}) conflicts with semantic bit (0x{expected:02X}); semantic mapping used"
-                )
+    word |= ground  # bits 0-1
+    word |= (tile_image & 0xF) << 9
 
-    # Note: other tags that appear in tag_to_attr are intentionally ignored for now.
-    # If future behavior requires mapping arbitrary tag->attr into reserved bits, that can be implemented.
-    # Documented behavior: tag->attr entries do not influence the defined named bits (solid/pushable/player)
-    # and are ignored unless explicitly recognized above.
+    for tag in td.tags:
+        attr = tag_to_attr.get(tag, 0)
+        word |= attr
 
     # Final bounds check
     if not (0 <= word <= 0xFFFF):
