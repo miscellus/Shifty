@@ -66,145 +66,89 @@ TryGetNeigborPos:
 	ret
 
 PlayerMove:
-; [C] = Direction (0 -> right, 1 -> up, 2 -> right, 3 -> down)
-; Output:
-;  CF = 1 if move was cancelled, 0 otherwise
-; Clobbers: assume all
-
-	lhld PlayerPos
+	; [C] = Direction (0 -> right, 1 -> up, 2 -> right, 3 -> down)
+	; This procedure pushes the pushable positions to the stack
+	; -> [A] = the number of positions pushed to the stack
+  lhld PlayerPos
 	xchg ; [D] = x, [E] = y
 
-	mov a, c
+	push d ; push our initial position
+	mvi b, 1 ; our initial position count is 1
+.loop:
+	;	lda PlayerMoveDir
+	mov a, c ; [A] = direction
 	call TryGetNeigborPos
-	rc ; return with carry out of bounds and the move should be cancelled
+	jc .endBlocked ; return with carry out of bounds and the move should be cancelled
 
-	call TileDataFromPos
-	; [B] = Tile index
-	; [C] = Tile attrib
-	mov a, c
+	push b ; save [B] = count, [C] = direction
+	  call TileDataFromPos ; [B] = Tile index, [C] = Tile attrib
+	  mov a, c ; [A] = Tile attributes
+	pop b ; restore [B] = count, [C] = direction
 
 	; Check for solid
 	rlc ; [CF] = 1 means solid [CF] = 0 means not solid
-	rc ; return with carry if the move should be cancelled
+	jc .endBlocked
 
-	; Check for pushables
-	rlc ; [CF] = 1 means pushable [CF] = 0 means not pushable
-	rc ; REMOVE REMOVE REMOVE (just placeholder) - makes pushables solid
+	rlc ; [CF] = 1 means pushable, 0 means empty in this case because it was not solid
+	jnc .performMove
 
-	;
-	; Commit move
-	;
-	push d ; Save new pos
-	  lhld PlayerPos ; [HL] = old pos
-	  xchg ; [DE] = old pos
-	  call TileAddressFromPos ; [HL] = address of old pos
-	  inx h
-	  mov a, m
-	  ani 0b11100000
-	  ori 1
-	  mov m, a
-	pop h ; restore [HL] = new pos
+	; it's a pushable, so push it (^;
+	push d
+	inr b ; increment position count
 
-	shld PlayerPos
-	xchg ; [DE] = new pos
+	jmp .loop
 
-	call TileAddressFromPos
-	inx h
-	mov a, m
-	ani 0b11100000
-	ori (TileBoxKidDown_Index << 1) | 1
-	mov m, a
+.performMove:
+	; Perform move
+	pop h ; [HL] = closest pos from playebr (from the stack list)
+	dcr b
+	jnz .nextPush
 
-	; push d ; save new player pos
-	; di
-	; lhld PlayerPos
-	; xchg
-	; lxi h, TileEmpty
-	; call DrawTile
-	; ei
-	; pop h ; restore new player pos in HL
-	; shld PlayerPos ; Save position that was previously in [DE]
-
-	ora a ; clear carry to indicate that the move was performed
+	shld PlayerPos ; Update player position
+	ora a ; clear carry bit to indicate that the move was performed
 	ret
 
+.nextPush:
+	; Write from closest pos into furthest pos
+	; [DE] = furthest pos from player
 
-; MoveBoxes:
-; ; [D] = box x
-; ; [E] = box y
-; ; [B] = box tile data
-; 	push b
-; 	push d
-; 	push h
+	push d ; save furthest pos
+	  push d ; save furthest pos again
+	    xchg ; [DE] = closest pos
+	    call TileAddressFromPos ; [HL] = address of closest pos
+	  pop d ; [DE] = furthest pos
+	  push b ; save count
+	    mov b, h
+	    mov c, l ; [BC] = address of closest pos
+	    call TileAddressFromPos ; [HL] = address of furthest pos
 
-; 	; probe pos = box pos + delta
-; 	push d ; save box pos
-; 	  lhld PlayerDeltaPos ; [HL] = delta
-; 	  ; [DE] = box pos
-; 	  mov a, d
-; 	  add h
-; 	  mov d, a
-; 	  mov a, e
-; 	  add l
-; 	  mov e, a
+	    ; Write from closest pos to furthest pos
+	    mov a, m
+	    ani GroundTileIndexMask
+	    mov d, a ; save ground index on furthest
+	    ldax b ; [A] = closest pos tile
+	    ani ~GroundTileIndexMask ; make space for ground tile index
+	    ora d
+	    mov m, a
+	    inx b
+	    inx h
+	    ldax b
+	    ani ~NeedsRedrawMask
+	    ori NeedsRedrawMask
+	    mov m, a
+	  pop b ; restore count
+  pop d ; restore furthest pos
 
-; 	  ; For now, just push a single box at a time
-; 	  lxi h, Level.TileData
-; 	  ; [DE] = probe pos
-; 	  call GetByteAtPos
-; 	  mov c, a ; [C] = probed tile
-; 	  rlc
-; 	  jc .retCf
-; 	  rlc
-; 	  jc .retCf
-; 	; The tile was not empty, so return with CF to cancel move
+	jmp .performMove
 
-; .canMove:
-; 	; Ok the tile after the box was empty, move the box
 
-; 	;
-; 	; Set probe pos to box tile
-; 	;
-; 	; [HL] = box pos
-; 	; [DE] = probe pos
-; 	; [B] = box tile
-; 	lxi h, Level.TileData
-; 	call SetByteAtPos ; TODO: can we use the index versions to avoid recomputing the index
-
-; 	; Draw the new box location
-; 	di
-; 	lxi h, TileCrateStone ; @hardcode this should be dynamic based on what tile we just pushed.
-; 	; [DE] = probe pos
-; 	; [HL] = ptr to box tile bitmap
-; 	call DrawTile
-; 	ei
-
-; 	;
-; 	; Set old box pos to empty
-; 	; TODO(jkk): For now we just swap
-; 	;
-; 	; [C] = probed tile
-; 	lxi h, Level.TileData
-; 	pop d ; [DE] = @POP(box pos)
-; 	mov b, c ; [B] = probed tile
-; 	call SetByteAtPos
-
-; 	; We don't need to draw an empty tile at old pos, because it will be overdrawn with the player.
-
-; 	; TODO(jkk): support box-trains (loop the above)
-; 	pop h
-; 	pop d
-; 	pop b
-; 	ora a ; clear carry flag
-; 	ret
-
-; .retCf:
-; 	pop h ; [HL] = @POP(box pos)
-; 	pop h
-; 	pop d
-; 	pop b
-; 	stc
-; 	ret
+.endBlocked:
+	; Unwind the stack
+	pop h
+	dcr b
+	jnz .endBlocked
+	stc ; return with carry to indicate that the move was blocked
+	ret
 
 ReadInput:
 ; Output:
@@ -342,15 +286,14 @@ TileOffsetFromPos:
 	ret
 
 TileAddressFromPos:
+; [D] = X pos (0 - 23)
+; [E] = Y pos (0 - 7)
+; -> [HL] = tile address
+	push b
 	call TileOffsetFromPos
-
-	; intended fallthrough
-
-TileAddressFromOffset:
-; [BC] = tile offset
-; -> [HL] = tile data
 	lxi h, Level.TileData
 	dad b
+	pop b
 	ret
 
 TileDataFromPos:
