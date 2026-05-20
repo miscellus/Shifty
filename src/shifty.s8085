@@ -25,6 +25,13 @@ GameLoop:
 	call PlayerMove
 	jc GameLoop
 
+	lda PlayerMoveDir
+  lhld PlayerPos
+	xchg ; [D] = x, [E] = y
+	call TryGetNeigborPos
+	xchg
+	shld PlayerPos
+
 	call Draw
 	jmp GameLoop
 
@@ -75,8 +82,8 @@ PlayerMove:
 	push d ; push our initial position
 	mvi b, 1 ; our initial position count is 1
 .loop:
-	;	lda PlayerMoveDir
-	mov a, c ; [A] = direction
+	lda PlayerMoveDir
+	; mov a, c ; [A] = direction
 	call TryGetNeigborPos
 	jc .endBlocked ; return with carry out of bounds and the move should be cancelled
 
@@ -98,13 +105,21 @@ PlayerMove:
 
 	jmp .loop
 
+.endBlocked:
+	; Unwind the stack
+	pop h
+	dcr b
+	jnz .endBlocked
+	stc ; return with carry to indicate that the move was blocked
+	ret
+
 .performMove:
 	; Perform move
 	pop h ; [HL] = closest pos from playebr (from the stack list)
 	dcr b
 	jnz .nextPush
 
-	shld PlayerPos ; Update player position
+	; shld PlayerPos ; Update player position
 	ora a ; clear carry bit to indicate that the move was performed
 	ret
 
@@ -123,32 +138,22 @@ PlayerMove:
 	    call TileAddressFromPos ; [HL] = address of furthest pos
 
 	    ; Write from closest pos to furthest pos
-	    mov a, m
-	    ani GroundTileIndexMask
-	    mov d, a ; save ground index on furthest
+	    ; mov a, m
+	    ; ani GroundTileIndexMask
+	    ; mov d, a ; save ground index on furthest
 	    ldax b ; [A] = closest pos tile
-	    ani ~GroundTileIndexMask ; make space for ground tile index
-	    ora d
-	    mov m, a
+	    ; ani ~GroundTileIndexMask ; make space for ground tile index
+	    ; ora d
+	    mov m, a ; Write to furthest
 	    inx b
 	    inx h
 	    ldax b
-	    ani ~NeedsRedrawMask
 	    ori NeedsRedrawMask
 	    mov m, a
 	  pop b ; restore count
   pop d ; restore furthest pos
 
 	jmp .performMove
-
-
-.endBlocked:
-	; Unwind the stack
-	pop h
-	dcr b
-	jnz .endBlocked
-	stc ; return with carry to indicate that the move was blocked
-	ret
 
 ReadInput:
 ; Output:
