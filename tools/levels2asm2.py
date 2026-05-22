@@ -201,12 +201,12 @@ def compute_tile_word(td: TileDef, tag_to_attr: Dict[str, int]) -> int:
     Compute a 16-bit tile word for one tile definition according to the bitfield:
 
       Bits 0–1  (2 bits): groundTileImage        // what to draw when tile image is 0
-      Bits 2–4  (3 bits): reserved1
-      Bit 5     (1 bit) : needsRedraw            // dirty bit (not set by tags by default)
+      Bits 2–5  (4 bits): reserved1
       Bit 6     (1 bit) : isPushable
       Bit 7     (1 bit) : isSolid
-      Bits 8–11 (4 bits): tileImage               // primary tile image index (0–15)
-      Bits 12–15(4 bits): reserved2
+      Bit 8     (1 bit) : needsRedraw            // dirty bit (not set by tags by default)
+      Bits 9–12 (4 bits): tileImage              // primary tile image index (0–15)
+      Bits 13–15(3 bits): reserved2
 
     Mapping rules implemented:
       - tileImage (bits 8–11) comes from the tile's asm index.

@@ -25,12 +25,12 @@ GameLoop:
 	call PlayerMove
 	jc GameLoop
 
-	lda PlayerMoveDir
-  lhld PlayerPos
-	xchg ; [D] = x, [E] = y
-	call TryGetNeigborPos
-	xchg
-	shld PlayerPos
+	; lda PlayerMoveDir
+  ; lhld PlayerPos
+	; xchg ; [D] = x, [E] = y
+	; call TryGetNeigborPos
+	; xchg
+	; shld PlayerPos
 
 	call Draw
 	jmp GameLoop
@@ -114,46 +114,106 @@ PlayerMove:
 	ret
 
 .performMove:
-	; Perform move
-	pop h ; [HL] = closest pos from playebr (from the stack list)
-	dcr b
-	jnz .nextPush
+	; Check if we are moving the player this iteration (B=1).
+	; If B=1, DE currently holds the target coordinates for the player.
+	mov a, b
+	cpi 1
+	jnz .skipPlayerPosUpdate
+	xchg               ; [HL] = new player pos
+	shld PlayerPos     ; Update player position in memory
+	xchg               ; Restore [DE] to target position
+.skipPlayerPosUpdate:
+	pop h ; [HL] = closest pos from player (from the stack)
 
-	; shld PlayerPos ; Update player position
-	ora a ; clear carry bit to indicate that the move was performed
+	push h ; Save the closest pos. This MUST become the furthest pos for the next iteration!
+	push b ; save loop count
+
+	; Get address of closest pos
+	push d ; save furthest pos
+	  xchg ; [DE] = closest pos
+	  call TileAddressFromPos ; [HL] = addr of closest
+	  mov b, h
+	  mov c, l ; [BC] = addr of closest
+	pop d ; [DE] = furthest pos
+
+	; Get address of furthest pos
+	call TileAddressFromPos ; [HL] = addr of furthest
+
+	; Write from closest pos [BC] to furthest pos [HL]
+	; mov a, m
+	; ani GroundTileIndexMask
+	; mov d, a ; [D] = preserved ground tile index from furthest pos
+
+	ldax b
+	; ani ~GroundTileIndexMask
+	; ora d ; This
+	mov m, a
+	inx b
+	inx h
+	ldax b
+	ori NeedsRedrawMask
+	mov m, a
+
+	pop b ; restore loop count
+	pop d ; [DE] = closest pos (this is the NEW target space for the next loop!)
+
+	; Decrement and loop until B hits 0
+	dcr b
+	jnz .performMove
+
+	; [DE] = original player position before the move
+	; Clear foreground tile on the starting position, the player just moved away from this tile.
+  call TileAddressFromPos ; [HL] = addr of closest
+  inx h
+  mov a, m
+  ani ~TileIndexMask
+  ori NeedsRedrawMask
+  mov m, a
+
+	ora a ; clear carry bit to indicate that the move was performed successfully
 	ret
 
-.nextPush:
-	; Write from closest pos into furthest pos
-	; [DE] = furthest pos from player
+; .performMove:
+; 	; Perform move
+; 	pop h ; [HL] = closest pos from playebr (from the stack list)
+; 	dcr b
+; 	jnz .nextPush
 
-	push d ; save furthest pos
-	  push d ; save furthest pos again
-	    xchg ; [DE] = closest pos
-	    call TileAddressFromPos ; [HL] = address of closest pos
-	  pop d ; [DE] = furthest pos
-	  push b ; save count
-	    mov b, h
-	    mov c, l ; [BC] = address of closest pos
-	    call TileAddressFromPos ; [HL] = address of furthest pos
+; 	; shld PlayerPos ; Update player position
+; 	ora a ; clear carry bit to indicate that the move was performed
+; 	ret
 
-	    ; Write from closest pos to furthest pos
-	    ; mov a, m
-	    ; ani GroundTileIndexMask
-	    ; mov d, a ; save ground index on furthest
-	    ldax b ; [A] = closest pos tile
-	    ; ani ~GroundTileIndexMask ; make space for ground tile index
-	    ; ora d
-	    mov m, a ; Write to furthest
-	    inx b
-	    inx h
-	    ldax b
-	    ori NeedsRedrawMask
-	    mov m, a
-	  pop b ; restore count
-  pop d ; restore furthest pos
+; .nextPush:
+; 	; Write from closest pos into furthest pos
+; 	; [DE] = furthest pos from player
 
-	jmp .performMove
+; 	push d ; save furthest pos
+; 	  push d ; save furthest pos again
+; 	    xchg ; [DE] = closest pos
+; 	    call TileAddressFromPos ; [HL] = address of closest pos
+; 	  pop d ; [DE] = furthest pos
+; 	  push b ; save count
+; 	    mov b, h
+; 	    mov c, l ; [BC] = address of closest pos
+; 	    call TileAddressFromPos ; [HL] = address of furthest pos
+
+; 	    ; Write from closest pos to furthest pos
+; 	    ; mov a, m
+; 	    ; ani GroundTileIndexMask
+; 	    ; mov d, a ; save ground index on furthest
+; 	    ldax b ; [A] = closest pos tile
+; 	    ; ani ~GroundTileIndexMask ; make space for ground tile index
+; 	    ; ora d
+; 	    mov m, a ; Write to furthest
+; 	    inx b
+; 	    inx h
+; 	    ldax b
+; 	    ori NeedsRedrawMask
+; 	    mov m, a
+; 	  pop b ; restore count
+;   pop d ; restore furthest pos
+
+; 	jmp .performMove
 
 ReadInput:
 ; Output:
