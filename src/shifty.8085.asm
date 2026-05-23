@@ -25,13 +25,6 @@ GameLoop:
 	call PlayerMove
 	jc GameLoop
 
-	; lda PlayerMoveDir
-  ; lhld PlayerPos
-	; xchg ; [D] = x, [E] = y
-	; call TryGetNeigborPos
-	; xchg
-	; shld PlayerPos
-
 	call Draw
 	jmp GameLoop
 
@@ -47,29 +40,36 @@ TryGetNeigborPos:
 	cpi DirectionRight
 	jnz .skipRight
 	inr d
-	jmp .testBounds
+	jmp IsPosOutOfBounds
 .skipRight:
 
 	cpi DirectionUp
 	jnz .skipUp
 	dcr e
-	jmp .testBounds
+	jmp IsPosOutOfBounds
 .skipUp:
 
 	cpi DirectionLeft
 	jnz .skipLeft
 	dcr d
-	jmp .testBounds
+	jmp IsPosOutOfBounds
 .skipLeft:
 
 	cpi DirectionDown
-	jnz .skipDown
+	rnz
 	inr e
-	jmp .testBounds
-.skipDown:
+	;jmp IsPosOutOfBounds
 
-.testBounds:
-	call IsPosOutOfBounds
+IsPosOutOfBounds:
+; [D] = X pos
+; [E] = Y pos
+; -> [CF] 1 if out of bounds
+; Clobbers [A]
+	mov a, e ; check y
+	adi -8
+	rc
+	mov a, d ; check x
+	adi -24
 	ret
 
 PlayerMove:
@@ -172,48 +172,6 @@ PlayerMove:
 
 	ora a ; clear carry bit to indicate that the move was performed successfully
 	ret
-
-; .performMove:
-; 	; Perform move
-; 	pop h ; [HL] = closest pos from playebr (from the stack list)
-; 	dcr b
-; 	jnz .nextPush
-
-; 	; shld PlayerPos ; Update player position
-; 	ora a ; clear carry bit to indicate that the move was performed
-; 	ret
-
-; .nextPush:
-; 	; Write from closest pos into furthest pos
-; 	; [DE] = furthest pos from player
-
-; 	push d ; save furthest pos
-; 	  push d ; save furthest pos again
-; 	    xchg ; [DE] = closest pos
-; 	    call TileAddressFromPos ; [HL] = address of closest pos
-; 	  pop d ; [DE] = furthest pos
-; 	  push b ; save count
-; 	    mov b, h
-; 	    mov c, l ; [BC] = address of closest pos
-; 	    call TileAddressFromPos ; [HL] = address of furthest pos
-
-; 	    ; Write from closest pos to furthest pos
-; 	    ; mov a, m
-; 	    ; ani GroundTileIndexMask
-; 	    ; mov d, a ; save ground index on furthest
-; 	    ldax b ; [A] = closest pos tile
-; 	    ; ani ~GroundTileIndexMask ; make space for ground tile index
-; 	    ; ora d
-; 	    mov m, a ; Write to furthest
-; 	    inx b
-; 	    inx h
-; 	    ldax b
-; 	    ori NeedsRedrawMask
-; 	    mov m, a
-; 	  pop b ; restore count
-;   pop d ; restore furthest pos
-
-; 	jmp .performMove
 
 ReadInput:
 ; Output:
@@ -372,40 +330,6 @@ TileDataFromPos:
 	inx h
 	mov b, m
 	pop h
-	ret
-
-GetByteAtPos:
-; [HL] = points to base of e.g. Level.TileData (or any uint8_t[8][24])
-; [D] = X pos
-; [E] = Y pos
-; -> [A] = Looked up byte
-; Clobbers [HL]
-	call IndexFromPos
-
-	; intended fallthrough
-
-GetByteAtIndex:
-; [HL] = points to base of array (max length 255)
-; [A] = Index
-; -> [A] Looked up byte
-	add l
-	mov l, a
-	mvi a, 0
-	adc h
-	mov h, a ; [HL] = TileData + X*8 + Y
-	mov a, m ; [A] = tile attribute
-	ret
-
-IsPosOutOfBounds:
-; [D] = X pos
-; [E] = Y pos
-; -> [CF] 1 if out of bounds
-; Clobbers [A]
-	mov a, e ; check y
-	adi -8
-	rc
-	mov a, d ; check x
-	adi -24
 	ret
 
 Draw:
@@ -570,7 +494,7 @@ DrawTile:
 	call LcdWaitReady
 	out PortLcdCmd ; Set page and offset
 
-	mvi c, 9
+	mvi c, 10
 .WriteColumns:
 	in PortLcdStat
 	rlc ; shift busy bit out into carry bit
@@ -580,10 +504,6 @@ DrawTile:
 	inx h
 	dcr c
 	jnz .WriteColumns
-
-	call LcdWaitReady
-	mov a, m
-	out PortLcdData ; Write column to LCD memory
 
 	pop psw
 	pop b

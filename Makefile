@@ -18,11 +18,11 @@ $(SHIFTY): build src/shifty.8085.asm src/tiles.8085.asm src/levels.8085.asm Make
 	$(ASM) -o $(SHIFTY).bin src/shifty.8085.asm
 	python tools/bin2bas.py $(SHIFTY).bin -o $(SHIFTY).bas
 
-src/tiles.8085.asm: $(wildcard assets/tile_images/*.png) tools/png2asm.py
+src/tiles.8085.asm: $(wildcard assets/tile_images/*.png) tools/png2asm.py Makefile
 	python tools/png2asm.py assets/tile_images src/tiles.8085.asm
 
-src/levels.8085.asm: assets/levels.txt src/tiles.8085.asm tools/levels2asm4.py Makefile
-	python tools/levels2asm2.py assets/levels.txt src/tiles.8085.asm src/levels.8085.asm
+src/levels.8085.asm: assets/levels.txt src/tiles.8085.asm tools/levels2asm.py Makefile
+	python tools/levels2asm.py assets/levels.txt src/tiles.8085.asm src/levels.8085.asm
 
 build:
 	mkdir -p build
