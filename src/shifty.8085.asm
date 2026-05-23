@@ -10,7 +10,7 @@ DirectionDown  equ 3
 
 TargetNec equ 1
 ; TargetT100 equ 1
-	include "hardware.s8085"
+	include "hardware.8085.asm"
 
 	org MapRamBase
 GameStart:
@@ -712,11 +712,11 @@ SetInterruptMask_09:
 ;=======================================
 ; Tile images
 Tiles:
-  include "tiles.s8085"
+  include "tiles.8085.asm"
 
 ;=======================================
 ; Levels
-  include "levels.s8085"
+  include "levels.8085.asm"
 
 ;=======================================
 ; Game data

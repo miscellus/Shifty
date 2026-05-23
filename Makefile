@@ -13,16 +13,16 @@ all: run
 send2emu: build/shifty.co
 	python tools/send2emu.py $(SHIFTY) --host localhost --port 9001
 
-$(SHIFTY): build src/shifty.s8085 src/tiles.s8085 src/levels.s8085 Makefile
-	$(ASM) -c -o $(SHIFTY) src/shifty.s8085
-	$(ASM) -o $(SHIFTY).bin src/shifty.s8085
+$(SHIFTY): build src/shifty.8085.asm src/tiles.8085.asm src/levels.8085.asm Makefile
+	$(ASM) -c -o $(SHIFTY) src/shifty.8085.asm
+	$(ASM) -o $(SHIFTY).bin src/shifty.8085.asm
 	python tools/bin2bas.py $(SHIFTY).bin -o $(SHIFTY).bas
 
-src/tiles.s8085: $(wildcard assets/tile_images/*.png) tools/png2asm.py
-	python tools/png2asm.py assets/tile_images src/tiles.s8085
+src/tiles.8085.asm: $(wildcard assets/tile_images/*.png) tools/png2asm.py
+	python tools/png2asm.py assets/tile_images src/tiles.8085.asm
 
-src/levels.s8085: assets/levels.txt src/tiles.s8085 tools/levels2asm4.py Makefile
-	python tools/levels2asm2.py assets/levels.txt src/tiles.s8085 src/levels.s8085
+src/levels.8085.asm: assets/levels.txt src/tiles.8085.asm tools/levels2asm4.py Makefile
+	python tools/levels2asm2.py assets/levels.txt src/tiles.8085.asm src/levels.8085.asm
 
 build:
 	mkdir -p build

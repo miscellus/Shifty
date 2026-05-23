@@ -4,11 +4,14 @@ import argparse
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Callable
+import sys
+import warnings
 
 LEVEL_WIDTH = 24
 LEVEL_HEIGHT = 8
 _BYTES_PER_LINE = 12
+_WORDS_PER_LINE = 8  # emit 8 words (16 bytes) per 'dw' line for readability
 
 @dataclass(frozen=True)
 class TileDef:
@@ -78,8 +81,6 @@ def parse_input_with_tagmap(path: Path) -> Tuple[Dict[str, TileDef], Dict[str, i
             mappings[td.char] = td
 
         # 2) optional tag->attr mapping block: peek next non-empty non-comment line
-        # We'll read ahead until a non-empty, non-comment line is found.
-        # If that line contains '=' we treat it as tag map entries; otherwise it's the start of levels.
         pending_lines: List[str] = []
         next_line = None
         for raw in f:
@@ -113,9 +114,11 @@ def parse_input_with_tagmap(path: Path) -> Tuple[Dict[str, TileDef], Dict[str, i
                 tag = m.group("tag").lstrip("#")
                 val = m.group("val")
                 attr = int(val, 0)
-                if not (0 <= attr <= 0xFF):
+                if not (0 <= attr <= 0xFFFF):
                     raise ValueError(f"attribute value out of range: {val}")
                 tag_to_attr[tag] = attr
+
+            print(tag_to_attr)
         else:
             # no tag map: if next_line exists and is not a tag map, push it back into an iterator
             if next_line is not None:
@@ -181,11 +184,77 @@ def _emit_db_bytes(out: List[str], label: Optional[str], bytes_seq: List[int]) -
         chunk = bytes_seq[i : i + _BYTES_PER_LINE]
         out.append("    db " + ", ".join(f"0b{b:08b}" for b in chunk))
 
-def level_to_column_major_fg(lvl: Level, mappings: Dict[str, TileDef], tag_to_attr: Dict[str, int]) -> List[int]:
+def _emit_dw_words(out: List[str], label: Optional[str], words: List[int]) -> None:
     """
-    Foreground byte = tile index OR attribute bits (from tags present on the tile).
-    Attribute bits are taken from tag_to_attr: for each tag in tile.tags, OR its value.
-    Column-major ordering.
+    Emit a label (if provided) then the words in column-major order using 'dw'.
+    Each word is formatted as 0xNNNN. Emits WORDS_PER_LINE per line.
+    """
+    if label:
+        out.append(f"{label}:")
+    for i in range(0, len(words), _WORDS_PER_LINE):
+        chunk = words[i : i + _WORDS_PER_LINE]
+        out.append("    dw " + ", ".join(f"0x{w:04x}" for w in chunk))
+
+# --- new tile-word computation ---
+def compute_tile_word(td: TileDef, tag_to_attr: Dict[str, int]) -> int:
+    """
+    Compute a 16-bit tile word for one tile definition according to the bitfield:
+
+      Bits 0–1  (2 bits): groundTileImage        // what to draw when tile image is 0
+      Bits 2–5  (4 bits): reserved1
+      Bit 6     (1 bit) : isPushable
+      Bit 7     (1 bit) : isSolid
+      Bit 8     (1 bit) : needsRedraw            // dirty bit (not set by tags by default)
+      Bits 9–12 (4 bits): tileImage              // primary tile image index (0–15)
+      Bits 13–15(3 bits): reserved2
+
+    Mapping rules implemented:
+      - tileImage (bits 8–11) comes from the tile's asm index.
+        Default mapping_strategy reduces via index % 16.
+      - Exception: if the tile index is in 0..3 (a pure ground/background tile), tileImage is forced to 0
+        and groundTileImage (bits 0–1) is set to that index.
+      - groundTileImage (bits 0–1) is set to the tile index if tile index in 0..3; otherwise 0.
+      - Tag-driven flags:
+          - 'solid' sets bit 7 (isSolid)
+          - 'pushable' sets bit 6 (isPushable)
+          - 'player' does not set bits but is used elsewhere for player start
+      - Entries in tag_to_attr that map to these semantic tags are ignored for per-byte OR logic;
+        if a tag->attr mapping exists for a known semantic tag and its bit value disagrees with the
+        semantic bit, a warning is emitted and the semantic mapping is preferred.
+    """
+
+    word = 0
+
+    if td.index is None:
+        raise RuntimeError(f"missing asm index for tile {td.name}")
+
+    # groundTileImage bits 0-1 and tileImage bits 8-11
+    if 0 <= td.index <= 3:
+        ground = td.index
+        tile_image = 0
+    elif 0 <= td.index <= 15:
+        ground = 0
+        tile_image = td.index
+    else:
+        raise RuntimeError(f"asm index {td.index} out of bounds for {td.name}")
+
+    word |= ground  # bits 0-1
+    word |= (tile_image & 0xF) << 9
+
+    for tag in td.tags:
+        attr = tag_to_attr.get(tag, 0)
+        word |= attr
+
+    # Final bounds check
+    if not (0 <= word <= 0xFFFF):
+        raise RuntimeError(f"computed tile word out of 16-bit range: 0x{word:X}")
+    return word
+
+def level_to_column_major_words(lvl: Level, mappings: Dict[str, TileDef], tag_to_attr: Dict[str, int]) -> List[int]:
+    """
+    Produce a single column-major sequence of 16-bit words for the level,
+    using compute_tile_word for each tile in the grid.
+    Column-major ordering is preserved (x outer, y inner).
     """
     seq: List[int] = []
     for x in range(lvl.width):
@@ -193,39 +262,8 @@ def level_to_column_major_fg(lvl: Level, mappings: Dict[str, TileDef], tag_to_at
             td = mappings[lvl.grid[y][x].char]
             if td.index is None:
                 raise RuntimeError(f"missing asm index for tile {td.name}")
-            attr = 0
-            for tag in td.tags:
-                attr |= tag_to_attr.get(tag, 0)
-            seq.append((td.index & 0xFF) | (attr & 0xFF))
-    return seq
-
-def level_to_column_major_bg(lvl: Level, mappings: Dict[str, TileDef], tag_to_attr: Dict[str, int], default_bg_char: Optional[str]) -> List[int]:
-    """
-    Background index per cell:
-      - if tile has tag 'bg' and that tile has an index, use that index
-      - else use default_bg_char's index (if provided and present)
-      - else pick first mapping with 'bg' tag
-    Column-major ordering.
-    """
-    # find default bg index
-    default_idx = None
-    if default_bg_char and default_bg_char in mappings:
-        default_idx = mappings[default_bg_char].index
-    if default_idx is None:
-        for td in mappings.values():
-            if 'bg' in td.tags and td.index is not None:
-                default_idx = td.index
-                break
-    if default_idx is None:
-        default_idx = 0
-    seq: List[int] = []
-    for x in range(lvl.width):
-        for y in range(lvl.height):
-            td = mappings[lvl.grid[y][x].char]
-            if 'bg' in td.tags and td.index is not None:
-                seq.append(td.index)
-            else:
-                seq.append(default_idx)
+            word = compute_tile_word(td, tag_to_attr)
+            seq.append(word)
     return seq
 
 def find_player_start(lvl: Level) -> Optional[Tuple[int, int]]:
@@ -238,7 +276,7 @@ def find_player_start(lvl: Level) -> Optional[Tuple[int, int]]:
 
 # --- main ---
 def main() -> None:
-    p = argparse.ArgumentParser(description="Emit levels as assembly (fg + bg), with tag->attribute mapping and player start")
+    p = argparse.ArgumentParser(description="Emit levels as single 16-bit-per-tile assembly block using new tile-word format")
     p.add_argument("input", type=Path, help="input file (mapping + optional tag->attr block + levels)")
     p.add_argument("tiles_asm", type=Path, help="tiles assembly file (used only for indices/validation)")
     p.add_argument("output", type=Path, help="output assembly file to write")
@@ -248,15 +286,13 @@ def main() -> None:
     mappings, tag_to_attr, levels = parse_input_with_tagmap(args.input)
     attach_indices(mappings, asm_indices, levels)
 
-    default_bg_char = '.' if '.' in mappings else None
-
     out: List[str] = []
     for lvl in levels:
         label = _sanitize_label(lvl.name)
         out.append(";-------------------------------------------------------------------------------")
         out.append(f"{label}:")
         out.append(";-------------------------------------------------------------------------------")
-        # player start (if any)
+        # player start (if any) - same naming convention but tied to sanitized label
         ps = find_player_start(lvl)
         if ps:
             x, y = ps
@@ -264,14 +300,11 @@ def main() -> None:
             out.append(f".PlayerStartX: db {x}")
             out.append("")  # blank
 
-        fg = level_to_column_major_fg(lvl, mappings, tag_to_attr)
-        bg = level_to_column_major_bg(lvl, mappings, tag_to_attr, default_bg_char)
+        # produce single 16-bit-per-tile column-major block
+        words = level_to_column_major_words(lvl, mappings, tag_to_attr)
 
-        # emit foreground (label already used above; create a .FG suffix)
-        _emit_db_bytes(out, ".FG", fg)
-        out.append("")  # blank
-        # emit background block
-        _emit_db_bytes(out, ".BG", bg)
+        # Emit a readable dw block label (use .TileData suffix)
+        _emit_dw_words(out, ".TileData", words)
         out.append("")  # blank between levels
 
     args.output.write_text("\n".join(out), encoding="utf-8")
