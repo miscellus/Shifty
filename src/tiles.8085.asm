@@ -15,7 +15,21 @@ TileEmpty:
 	db 0b00000000
 
 ;---------------------------------------
-TileHole_Index equ 1
+TileEmpty2_Index equ 1
+TileEmpty2:
+	db 0b00000000
+	db 0b00100000
+	db 0b00000000
+	db 0b00000100
+	db 0b00000000
+	db 0b00000000
+	db 0b00000000
+	db 0b00001000
+	db 0b00000000
+	db 0b00000000
+
+;---------------------------------------
+TileHole_Index equ 2
 TileHole:
 	db 0b01111110
 	db 0b11111001
@@ -29,7 +43,7 @@ TileHole:
 	db 0b01111110
 
 ;---------------------------------------
-TileGoal_Index equ 2
+TileGoal_Index equ 3
 TileGoal:
 	db 0b11111111
 	db 0b11111111
@@ -43,7 +57,7 @@ TileGoal:
 	db 0b11111111
 
 ;---------------------------------------
-TileCrateStone_Index equ 3
+TileCrateStone_Index equ 4
 TileCrateStone:
 	db 0b01111110
 	db 0b11111111
@@ -57,7 +71,7 @@ TileCrateStone:
 	db 0b00000000
 
 ;---------------------------------------
-TileRightArrow_Index equ 4
+TileRightArrow_Index equ 5
 TileRightArrow:
 	db 0b00000000
 	db 0b00011000
@@ -71,7 +85,7 @@ TileRightArrow:
 	db 0b00000000
 
 ;---------------------------------------
-TileUpArrow_Index equ 5
+TileUpArrow_Index equ 6
 TileUpArrow:
 	db 0b00000000
 	db 0b00000000
@@ -85,7 +99,7 @@ TileUpArrow:
 	db 0b00000000
 
 ;---------------------------------------
-TileLeftArrow_Index equ 6
+TileLeftArrow_Index equ 7
 TileLeftArrow:
 	db 0b00000000
 	db 0b00011000
@@ -99,7 +113,7 @@ TileLeftArrow:
 	db 0b00000000
 
 ;---------------------------------------
-TileDownArrow_Index equ 7
+TileDownArrow_Index equ 8
 TileDownArrow:
 	db 0b00000000
 	db 0b00000000
@@ -113,7 +127,7 @@ TileDownArrow:
 	db 0b00000000
 
 ;---------------------------------------
-TileBoxKidRight_Index equ 8
+TileBoxKidRight_Index equ 9
 TileBoxKidRight:
 	db 0b00111110
 	db 0b01011101
@@ -127,7 +141,7 @@ TileBoxKidRight:
 	db 0b00000000
 
 ;---------------------------------------
-TileBoxKidUp_Index equ 9
+TileBoxKidUp_Index equ 10
 TileBoxKidUp:
 	db 0b00010000
 	db 0b00111110
@@ -141,7 +155,7 @@ TileBoxKidUp:
 	db 0b00010000
 
 ;---------------------------------------
-TileBoxKidLeft_Index equ 10
+TileBoxKidLeft_Index equ 11
 TileBoxKidLeft:
 	db 0b00000000
 	db 0b00010000
@@ -155,7 +169,7 @@ TileBoxKidLeft:
 	db 0b00111110
 
 ;---------------------------------------
-TileBoxKidDown_Index equ 11
+TileBoxKidDown_Index equ 12
 TileBoxKidDown:
 	db 0b00010000
 	db 0b00111110
@@ -169,7 +183,7 @@ TileBoxKidDown:
 	db 0b00010000
 
 ;---------------------------------------
-TileWallBrick_Index equ 12
+TileWallBrick_Index equ 13
 TileWallBrick:
 	db 0b01110111
 	db 0b01110111
@@ -183,7 +197,7 @@ TileWallBrick:
 	db 0b01110111
 
 ;---------------------------------------
-TileWallBrick2_Index equ 13
+TileWallBrick2_Index equ 14
 TileWallBrick2:
 	db 0b01110111
 	db 0b01110111
@@ -197,7 +211,7 @@ TileWallBrick2:
 	db 0b01110111
 
 ;---------------------------------------
-TileWallBrick3_Index equ 14
+TileWallBrick3_Index equ 15
 TileWallBrick3:
 	db 0b11011101
 	db 0b11010111
@@ -209,18 +223,4 @@ TileWallBrick3:
 	db 0b11011101
 	db 0b11011101
 	db 0b01111101
-
-;---------------------------------------
-TileWallBrick4_Index equ 15
-TileWallBrick4:
-	db 0b10011101
-	db 0b11011111
-	db 0b11011001
-	db 0b11011101
-	db 0b11111101
-	db 0b10011101
-	db 0b11011111
-	db 0b11011001
-	db 0b11011101
-	db 0b11111101
 

@@ -65,7 +65,7 @@ IsPosOutOfBounds:
 ; [E] = Y pos
 ; -> [CF] 1 if out of bounds
 ; Clobbers [A]
-	mov a, e ; check y
+	mOv a, e ; check y
 	adi -8
 	rc
 	mov a, d ; check x
@@ -85,31 +85,58 @@ PlayerMove:
 	lda PlayerMoveDir
 	; mov a, c ; [A] = direction
 	call TryGetNeigborPos
-	jc .endBlocked ; return with carry out of bounds and the move should be cancelled
+	jc .cancelMove ; return with carry out of bounds and the move should be cancelled
 
 	push b ; save [B] = count, [C] = direction
 	  call TileDataFromPos ; [B] = Tile index, [C] = Tile attrib
 	  mov a, c ; [A] = Tile attributes
+
 	pop b ; restore [B] = count, [C] = direction
 
 	; Check for solid
 	rlc ; [CF] = 1 means solid [CF] = 0 means not solid
-	jc .endBlocked
+	jc .cancelMove
 
+	; Check for pushables
 	rlc ; [CF] = 1 means pushable, 0 means empty in this case because it was not solid
-	jnc .performMove
+	jc .foundPushable
 
+	; Check for hole
+	ani GroundTileIndexMask << 2 ; because of previous two RLC instructions
+	cpi TileHole_Index << 2
+	jz .foundHole
+
+	; Assume we found empty
+	jmp .performMove
+
+.foundHole:
+	; If previous tile was the player,
+	;   the hole acts as a solid wall, so cancel the move
+	; Else if the previous tile was a stone,
+	;   we are moving a stone into a hole,
+	;   so clear both and end in
+
+	; Get address of closest pos
+  call TileAddressFromPos ; [HL] = addr of closest
+
+  ; FORTSÆT HER
+
+	; To start with, just make act as solid no matter what
+	jmp .cancelMove
+
+.foundPushable:
 	; it's a pushable, so push it (^;
 	push d
 	inr b ; increment position count
 
 	jmp .loop
 
-.endBlocked:
+.cancelMove:
+	; Cancel the move, since we found a solid
 	; Unwind the stack
 	pop h
 	dcr b
-	jnz .endBlocked
+	jnz .cancelMove
 	stc ; return with carry to indicate that the move was blocked
 	ret
 
@@ -140,16 +167,17 @@ PlayerMove:
 	call TileAddressFromPos ; [HL] = addr of furthest
 
 	; Write from closest pos [BC] to furthest pos [HL]
-	; mov a, m
-	; ani GroundTileIndexMask
-	; mov d, a ; [D] = preserved ground tile index from furthest pos
+	mov a, m
+	ani GroundTileIndexMask
+	mov d, a ; [D] = preserved ground tile index from furthest pos
 
 	ldax b
-	; ani ~GroundTileIndexMask
-	; ora d ; This
+	ani ~GroundTileIndexMask
+	ora d ; This
 	mov m, a
 	inx b
 	inx h
+
 	ldax b
 	ori NeedsRedrawMask
 	mov m, a
@@ -226,6 +254,7 @@ LoadLevel:
 ; TODO(jkk): add compression and decompression
 	push b
 	push h
+
 	lxi b, Level
 .loop:
 	mov a, m
@@ -255,41 +284,6 @@ GameInit:
 
 	call Draw
 	ret
-
-IndexFromPos:
-; [D] = X pos
-; [E] = Y pos
-; -> [A] = Index
-	mov a, d
-	add a
-	add a
-	add a ; + X*8
-	add e ; + Y
-	ret
-
-SetByteAtPos:
-; [B] = byte to set
-; [D] = X pos
-; [E] = Y pos
-; [HL] = points to base of array (max length 255)
-; Clobbers: [A] [HL]
-	call IndexFromPos
-
-	; intended fallthrough
-
-SetByteAtIndex:
-; [B] = byte to set
-; [A] = Index
-; [HL] = points to base of array (max length 255)
-; Clobbers: [A] [HL]
-	add l
-	mov l, a
-	mvi a, 0
-	adc h
-	mov h, a ; [HL] = TileData + X*8 + Y
-	mov m, b ; Set tile attribute
-	ret
-
 
 TileOffsetFromPos:
 ; [D] = X pos (0 - 23)
