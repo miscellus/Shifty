@@ -1,4 +1,4 @@
-TileIndexMask       equ 0b00011111
+TileIndexMask       equ 0b00011110
 TileIndexShift      equ 1
 GroundTileIndexMask equ 0b00000011
 NeedsRedrawMask     equ 0b00000001
@@ -87,11 +87,8 @@ PlayerMove:
 	call TryGetNeigborPos
 	jc .cancelMove ; return with carry out of bounds and the move should be cancelled
 
-	push b ; save [B] = count, [C] = direction
-	  call TileDataFromPos ; [B] = Tile index, [C] = Tile attrib
-	  mov a, c ; [A] = Tile attributes
-
-	pop b ; restore [B] = count, [C] = direction
+  call TileAddressFromPos
+  mov a, m
 
 	; Check for solid
 	rlc ; [CF] = 1 means solid [CF] = 0 means not solid
@@ -110,19 +107,54 @@ PlayerMove:
 	jmp .performMove
 
 .foundHole:
-	; If previous tile was the player,
+	; If closest tile was the player,
 	;   the hole acts as a solid wall, so cancel the move
-	; Else if the previous tile was a stone,
+	; Else if the closest tile was a stone,
 	;   we are moving a stone into a hole,
 	;   so clear both and end in
 
+	mov a, b
+	cpi 1
+	jz .cancelMove ; The closest tile must be the player tile (i.e. not a stone), so cancel the move
+
+	; [DE] = furthest tile pos
+	; [HL] = furthest tile address
+
+	xthl ; [TOS] = furthest tile address, [HL] = closest tile pos
+	xchg ; [DE] = closest tile pos, [HL] = furthest tile pos
+
 	; Get address of closest pos
-  call TileAddressFromPos ; [HL] = addr of closest
+  call TileAddressFromPos ; [HL] = closest tile address
+	inx h
+	mov a, m
+	ani TileIndexMask
+	cpi TileCrateStone_Index << TileIndexShift
+	jnz .cancelMove ; The previous tile was not a stone, so cancel move
 
-  ; FORTSÆT HER
+	; Stone is going into hole
 
-	; To start with, just make act as solid no matter what
-	jmp .cancelMove
+	; Clear stone tile to ground
+	mov a, m
+	ani ~TileIndexMask
+	ori NeedsRedrawMask
+	mov m, a
+	dcx h
+	mov a, m
+	ani GroundTileIndexMask
+	mov m, a
+
+	; Clear hole to ground
+	pop h ; [HL] = furthest tile address (the hole)
+	mvi m, 0
+	inx h
+	mov a, m
+	ani ~TileIndexMask
+	ori NeedsRedrawMask
+	mov m, a
+
+	push d ; [TOS] = closest tile pos (restore the position stack)
+
+	jmp .performMove
 
 .foundPushable:
 	; it's a pushable, so push it (^;
@@ -273,7 +305,7 @@ LoadLevel:
 	ret
 
 GameInit:
-	lxi h, Level0
+	lxi h, Level2
 	call LoadLevel
 
 	lda Level.PlayerStartX
@@ -343,7 +375,7 @@ Draw:
 	jmp .continue
 .needsRedraw:
 
-	ani TileIndexMask
+	ani TileIndexMask >> TileIndexShift ; shift because of previous RRC
 	jnz .skipGroundTileImage
 	mov a, b
 	ani GroundTileIndexMask
