@@ -305,7 +305,7 @@ LoadLevel:
 	ret
 
 GameInit:
-	lxi h, Level2
+	lxi h, Level1
 	call LoadLevel
 
 	lda Level.PlayerStartX
