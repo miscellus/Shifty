@@ -4,5 +4,20 @@
 		{
 			"path": "."
 		}
+	],
+	"build_systems": [
+		{
+			"name": "build it",
+			"cmd": ["clang", "-c", "-Wall", "-Wextra", "$file"],
+			"selector": "source.c",
+			"working_dir": "$file_path",
+			"file_regex": "^((?:[a-zA-Z]:)?[^:]+):([0-9]+):([0-9]+): (.*)$",
+			"variants": [
+				{
+					"name": "+ link",
+					"cmd": ["clang", "-o", "${file}.prog", "-Wall", "-Wextra", "$file"]
+				}
+			]
+		}
 	]
 }

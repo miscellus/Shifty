@@ -1,0 +1,961 @@
+#include <stdint.h>
+#include <stdbool.h>
+
+#define assert(...)
+
+// The 4 main opcode groups (Bits 6-7)
+typedef uint8_t InstructionGroup;
+enum {
+    GRP_CTRL_MEM = 0, // Control, Immediate, and Direct Memory instructions
+    GRP_MOV_HLT  = 1, // Register-to-Register MOVs and HLT
+    GRP_ALU      = 2, // Register/Memory ALU Operations
+    GRP_BRANCH   = 3  // Jumps, Calls, Returns, Stack, and Immediates
+};
+
+// 8-bit Registers (Bits 0-2 or 3-5)
+typedef uint8_t Reg8;
+enum {
+    REG_B = 0,
+    REG_C = 1,
+    REG_D = 2,
+    REG_E = 3,
+    REG_H = 4,
+    REG_L = 5,
+    REG_M = 6, // Memory pseudo-register (HL pointer)
+    REG_A = 7  // Accumulator
+};
+
+// 16-bit Register Pairs (Bits 4-5)
+typedef uint8_t RegPair;
+enum {
+    RP_BC     = 0,
+    RP_DE     = 1,
+    RP_HL     = 2,
+    RP_SP_PSW = 3  // Stack Pointer (or Program Status Word for PUSH/POP)
+};
+
+// ALU Operations (Bits 3-5 in Group 2 & Group 3 Immediates)
+typedef uint8_t AluOp;
+enum {
+    ALU_ADD = 0,
+    ALU_ADC = 1,
+    ALU_SUB = 2,
+    ALU_SBB = 3,
+    ALU_ANA = 4,
+    ALU_XRA = 5,
+    ALU_ORA = 6,
+    ALU_CMP = 7
+};
+
+// Branch Conditions (Bits 3-5 in Group 3)
+typedef uint8_t ConditionKind;
+enum {
+    COND_NZ = 0, // Not Zero
+    COND_Z  = 1, // Zero
+    COND_NC = 2, // No Carry
+    COND_C  = 3, // Carry
+    COND_PO = 4, // Parity Odd
+    COND_PE = 5, // Parity Even
+    COND_P  = 6, // Plus (Positive)
+    COND_M  = 7  // Minus (Negative)
+};
+
+// Z-Categories for Group 0 (Bits 0-2)
+typedef uint8_t Group0Op;
+enum {
+    G0_MISC_CTRL    = 0, // NOP, RIM, SIM
+    G0_LXI_DAD      = 1, // LXI, DAD
+    G0_LD_ST_A      = 2, // STAX, LDAX, SHLD, LHLD, STA, LDA
+    G0_INC_DEC_16   = 3, // INX, DCX
+    G0_INC_8        = 4, // INR
+    G0_DEC_8        = 5, // DCR
+    G0_MVI          = 6, // MVI
+    G0_ACC_CTRL     = 7  // RLC, RRC, RAL, RAR, DAA, CMA, STC, CMC
+};
+
+// Z-Categories for Group 3 (Bits 0-2)
+typedef uint8_t Group3Op;
+enum {
+    G3_RET_COND     = 0, // Rcc
+    G3_POP_RET_MISC = 1, // POP, RET, PCHL, SPHL
+    G3_JMP_COND     = 2, // Jcc
+    G3_JMP_MISC     = 3, // JMP, IN, OUT, XTHL, XCHG, DI, EI
+    G3_CALL_COND    = 4, // Ccc
+    G3_PUSH_CALL    = 5, // PUSH, CALL
+    G3_ALU_IMM      = 6, // ADI, ACI, SUI, SBI, ANI, XRI, ORI, CPI
+    G3_RST          = 7  // RST n
+};
+
+// Specific static opcodes for clarity
+typedef uint8_t SpecialOpcode;
+enum {
+    OP_NOP  = 0x00,
+    OP_RIM  = 0x20,
+    OP_SIM  = 0x30,
+    OP_HLT  = 0x76,
+    OP_EI   = 0xFB,
+    OP_CALL = 0xCD
+};
+
+// Masking constants for decoding RST hardware interrupts
+typedef uint8_t RstVectorMask;
+enum {
+    RST_BASE_OPCODE = 0xC7, // 11000111 in binary
+    RST_OPCODE_MASK = 0xC7, // Mask to check if bits 6,7 and 0,1,2 match RST pattern
+    RST_ADDR_MASK   = 0x38  // 00111000 (Extracts 'n * 8' directly from the opcode)
+};
+
+// Execution timing (T-states) for hardware interrupt acknowledgment
+typedef uint32_t IntrAckTiming;
+enum {
+    T_STATES_INTR_ACK_RST  = 12, // Standard RST acknowledgment timing
+    T_STATES_INTR_ACK_CALL = 18  // 3-byte CALL acknowledgment timing
+};
+
+typedef struct {
+    union { uint8_t x; uint8_t group; };
+    union { uint8_t y; uint8_t dest; uint8_t alu_op; uint8_t cond; };
+    union { uint8_t z; uint8_t src; uint8_t grp0_sub_op; uint8_t grp3_sub_op; };
+    union { uint8_t rp; uint8_t reg_pair; };
+} DecodedOpcode;
+
+typedef struct Vm_8085 Vm_8085;
+
+typedef bool (* Vm_8085_Memory_Cb)(Vm_8085 *vm, uint16_t address, bool write, uint8_t *in_out_data);
+typedef bool (* Vm_8085_Io_Cb)(Vm_8085* vm, uint8_t port, bool is_out, uint8_t *in_out_data);
+typedef bool (* Vm_8085_Loop_Cb)(Vm_8085* vm);
+
+typedef uint8_t Flags;
+enum {
+    FLAG_CY = (1 << 0),
+    FLAG_P  = (1 << 2),
+    FLAG_AC = (1 << 4),
+    FLAG_Z  = (1 << 6),
+    FLAG_S  = (1 << 7),
+};
+
+struct Vm_8085 {
+    uint8_t a, flags;
+    uint8_t b, c;
+    uint8_t d, e;
+    uint8_t h, l;
+
+    uint16_t sp;
+    uint16_t pc;
+
+    bool halt;
+    bool interrupts_enabled;
+    bool ei_delay_active;
+
+    // --- New Hardware Interrupt Pins & Masks ---
+    bool trap_asserted; // Highest priority (NMI)
+
+    bool rst75_latch;   // Priority 2 (Edge-triggered, requires a latch)
+    bool rst75_mask;
+
+    bool rst65_asserted; // Priority 3 (Level-triggered)
+    bool rst65_mask;
+
+    bool rst55_asserted; // Priority 4 (Level-triggered)
+    bool rst55_mask;
+
+    // --- Existing INTR state (Priority 5) ---
+    bool intr_asserted;
+    uint8_t intr_vector_opcode;
+
+    Vm_8085_Memory_Cb mem_cb;
+    Vm_8085_Io_Cb io_cb;
+    Vm_8085_Loop_Cb loop_cb;
+    void* user_data;
+
+    uint64_t clock_period_count;
+
+    uint8_t memory[65536];
+};
+
+static inline bool flag_get(Vm_8085 *vm, Flags flag) {
+    return (vm->flags & flag) != 0;
+}
+
+static inline void flag_set(Vm_8085 *vm, Flags flag, bool condition) {
+    if (condition) vm->flags |= flag;
+    else           vm->flags &= ~flag;
+}
+
+//
+// Memory & Hardware Abstractions
+//
+
+static inline uint8_t mem_read_byte(Vm_8085* vm, uint16_t address) {
+    uint8_t data = 0xFF;
+    if (vm->mem_cb && vm->mem_cb(vm, address, false, &data)) return data;
+    return vm->memory[address];
+}
+
+static inline void mem_write_byte(Vm_8085* vm, uint16_t address, uint8_t data) {
+    if (vm->mem_cb && vm->mem_cb(vm, address, true, &data)) return;
+    vm->memory[address] = data;
+}
+
+static inline uint16_t mem_read_word(Vm_8085 *vm, uint16_t address) {
+    uint16_t lo = mem_read_byte(vm, address);
+    uint16_t hi = mem_read_byte(vm, address + 1);
+    return (hi << 8) | lo;
+}
+
+static inline void mem_write_word(Vm_8085* vm, uint16_t address, uint16_t val) {
+    mem_write_byte(vm, address, (uint8_t)val);
+    mem_write_byte(vm, address + 1, (uint8_t)(val >> 8));
+}
+
+static inline uint8_t fetch_byte(Vm_8085 *vm) {
+    uint8_t result = mem_read_byte(vm, vm->pc);
+    vm->pc += 1;
+    return result;
+}
+
+static inline uint16_t fetch_word(Vm_8085 *vm) {
+    uint16_t result = mem_read_word(vm, vm->pc);
+    vm->pc += 2;
+    return result;
+}
+
+static inline void stack_push(Vm_8085 *vm, uint16_t val) {
+    vm->sp -= 2;
+    mem_write_word(vm, vm->sp, val);
+}
+
+static inline uint16_t stack_pop(Vm_8085 *vm) {
+    uint16_t val = mem_read_word(vm, vm->sp);
+    vm->sp += 2;
+    return val;
+}
+
+//
+// Register & Flag Management
+//
+
+static inline void flags_update_szp(Vm_8085 *vm, uint8_t result) {
+    flag_set(vm, FLAG_Z, result == 0);
+    flag_set(vm, FLAG_S, (result & 0x80) != 0);
+
+    // Bitwise parity check
+    result ^= result >> 4;
+    result ^= result >> 2;
+    result ^= result >> 1;
+    flag_set(vm, FLAG_P, !(result & 1));
+}
+
+uint8_t reg8_read(Vm_8085 *vm, Reg8 reg_index) {
+    switch (reg_index) {
+        case 0: return vm->b;
+        case 1: return vm->c;
+        case 2: return vm->d;
+        case 3: return vm->e;
+        case 4: return vm->h;
+        case 5: return vm->l;
+        case 6: return mem_read_byte(vm, (vm->h << 8) | vm->l);
+        case 7: return vm->a;
+        default: assert(0 && "Invalid reg_index");
+    }
+    return 0;
+}
+
+void reg8_write(Vm_8085 *vm, Reg8 reg_index, uint8_t val) {
+    switch (reg_index) {
+        case 0: vm->b = val; break;
+        case 1: vm->c = val; break;
+        case 2: vm->d = val; break;
+        case 3: vm->e = val; break;
+        case 4: vm->h = val; break;
+        case 5: vm->l = val; break;
+        case 6: mem_write_byte(vm, (vm->h << 8) | vm->l, val); break;
+        case 7: vm->a = val; break;
+        default: assert(0 && "Invalid reg_index");
+    }
+}
+
+uint16_t reg16_read(Vm_8085 *vm, RegPair rp_index, bool is_psw) {
+    switch (rp_index) {
+        case 0: return (vm->b << 8) | vm->c;
+        case 1: return (vm->d << 8) | vm->e;
+        case 2: return (vm->h << 8) | vm->l;
+        case 3: return is_psw ? ((vm->a << 8) | vm->flags) : vm->sp;
+        default: assert(0 && "Invalid rp_index");
+    }
+    return 0;
+}
+
+void reg16_write(Vm_8085 *vm, RegPair rp_index, uint16_t val, bool is_psw) {
+    uint8_t hi = (uint8_t)(val >> 8);
+    uint8_t lo = (uint8_t)val;
+    switch (rp_index) {
+        case 0: vm->b = hi; vm->c = lo; break;
+        case 1: vm->d = hi; vm->e = lo; break;
+        case 2: vm->h = hi; vm->l = lo; break;
+        case 3:
+            if (is_psw) {
+                vm->a = hi;
+                // 8085 HW enforcing: Bit 1 is 1, Bits 3/5 are 0
+                vm->flags = (lo & 0xD7) | 0x02;
+            }
+            else {
+                vm->sp = val;
+            }
+            break;
+        default: assert(0 && "Invalid rp_index");
+    }
+}
+
+static inline uint8_t io_read(Vm_8085* vm, uint16_t address) {
+    const bool is_write = false;
+    uint8_t data = 0xFF;
+
+    if (vm->io_cb && vm->io_cb(vm, (uint8_t)address, is_write, &data)) {
+        return data;
+    }
+
+    return 0xFF;
+}
+
+static inline void io_write(Vm_8085* vm, uint16_t address, uint8_t data) {
+    const bool is_write = true;
+
+    if (vm->io_cb) {
+        vm->io_cb(vm, (uint8_t)address, is_write, &data);
+    }
+}
+
+
+//
+// ALU Core
+//
+
+bool check_condition(Vm_8085 *vm, uint8_t condition_index) {
+    switch ((ConditionKind)condition_index) {
+        case COND_NZ: return !flag_get(vm, FLAG_Z);
+        case COND_Z:  return flag_get(vm, FLAG_Z);
+        case COND_NC: return !flag_get(vm, FLAG_CY);
+        case COND_C:  return flag_get(vm, FLAG_CY);
+        case COND_PO: return !flag_get(vm, FLAG_P);
+        case COND_PE: return flag_get(vm, FLAG_P);
+        case COND_P:  return !flag_get(vm, FLAG_S);
+        case COND_M:  return flag_get(vm, FLAG_S);
+    }
+    return false;
+}
+
+static inline void alu_add(Vm_8085 *vm, uint8_t operand, uint8_t cy_in) {
+    uint16_t res = vm->a + operand + cy_in;
+    flag_set(vm, FLAG_AC, ((vm->a & 0x0F) + (operand & 0x0F) + cy_in) > 0x0F);
+    flag_set(vm, FLAG_CY, res > 0xFF);
+    vm->a = (uint8_t)res;
+    flags_update_szp(vm, vm->a);
+}
+
+static inline void alu_sub(Vm_8085 *vm, uint8_t operand, uint8_t borrow_in, bool update_acc) {
+    uint8_t inv_operand = ~operand;
+    uint8_t carry_in = borrow_in ? 0 : 1;
+    uint16_t internal_res = vm->a + inv_operand + carry_in;
+
+    // The AC flag is the carry out of bit 3 from this internal addition
+    flag_set(vm, FLAG_AC, ((vm->a & 0x0F) + (inv_operand & 0x0F) + carry_in) > 0x0F);
+    flag_set(vm, FLAG_CY, !(internal_res > 0xFF)); // True borrow is inverted internal carry
+
+    if (update_acc) vm->a = (uint8_t)internal_res;
+    flags_update_szp(vm, (uint8_t)internal_res);
+}
+
+void execute_alu_op(Vm_8085 *vm, AluOp op, uint8_t operand) {
+
+    enum {
+        ALU_ADD = 0,
+        ALU_ADC = 1,
+        ALU_SUB = 2,
+        ALU_SBB = 3,
+        ALU_ANA = 4,
+        ALU_XRA = 5,
+        ALU_ORA = 6,
+        ALU_CMP = 7,
+    };
+
+    switch (op) {
+        case ALU_ADD: alu_add(vm, operand, 0); break;
+        case ALU_ADC: alu_add(vm, operand, flag_get(vm, FLAG_CY)); break;
+        case ALU_SUB: alu_sub(vm, operand, 0, true); break;
+        case ALU_SBB: alu_sub(vm, operand, flag_get(vm, FLAG_CY), true); break;
+        case ALU_ANA:
+            vm->a &= operand;
+            flag_set(vm, FLAG_CY, 0);
+            flag_set(vm, FLAG_AC, 1); // Documented Intel standard for ANA
+            flags_update_szp(vm, vm->a);
+            break;
+        case ALU_XRA:
+            vm->a ^= operand;
+            flag_set(vm, FLAG_CY, 0);
+            flag_set(vm, FLAG_AC, 0);
+            flags_update_szp(vm, vm->a);
+            break;
+        case ALU_ORA:
+            vm->a |= operand;
+            flag_set(vm, FLAG_CY, 0);
+            flag_set(vm, FLAG_AC, 0);
+            flags_update_szp(vm, vm->a);
+            break;
+        case ALU_CMP: alu_sub(vm, operand, 0, false); break;
+    }
+}
+
+void execute_acc_op(Vm_8085 *vm, uint8_t op_index) {
+    uint8_t a = vm->a;
+    switch (op_index) {
+        case 0: { // RLC
+            uint8_t bit7 = (a >> 7) & 1;
+            vm->a = (a << 1) | bit7;
+            flag_set(vm, FLAG_CY, bit7);
+            break;
+        }
+        case 1: { // RRC
+            uint8_t bit0 = a & 1;
+            vm->a = (a >> 1) | (bit0 << 7);
+            flag_set(vm, FLAG_CY, bit0);
+            break;
+        }
+        case 2: { // RAL
+            uint8_t cy = flag_get(vm, FLAG_CY);
+            flag_set(vm, FLAG_CY, (a >> 7) & 1);
+            vm->a = (a << 1) | cy;
+            break;
+        }
+        case 3: { // RAR
+            uint8_t cy = flag_get(vm, FLAG_CY);
+            flag_set(vm, FLAG_CY, a & 1);
+            vm->a = (a >> 1) | (cy << 7);
+            break;
+        }
+        case 4: { // DAA
+            uint16_t res = a;
+            uint8_t correction = 0;
+            if ((a & 0x0F) > 9 || flag_get(vm, FLAG_AC)) {
+                correction |= 0x06;
+                flag_set(vm, FLAG_AC, 1);
+            } else {
+                flag_set(vm, FLAG_AC, 0);
+            }
+            if (a > 0x99 || flag_get(vm, FLAG_CY)) {
+                correction |= 0x60;
+                flag_set(vm, FLAG_CY, 1);
+            }
+            res += correction;
+            vm->a = (uint8_t)res;
+            flags_update_szp(vm, vm->a);
+            break;
+        }
+        case 5: { // CMA
+            vm->a = ~a;
+            break;
+        }
+        case 6: { // STC
+            flag_set(vm, FLAG_CY, 1);
+            break;
+        }
+        case 7: { // CMC
+            flag_set(vm, FLAG_CY, !flag_get(vm, FLAG_CY));
+            break;
+        }
+    }
+}
+
+static void op_sim(Vm_8085 *vm) {
+    uint8_t a = vm->a;
+
+    // 1. Update Interrupt Masks
+    // Only apply the new masks if the Mask Set Enable (MSE) bit 3 is high
+    if (a & 0x08) {
+        vm->rst55_mask = (a & 0x01) != 0; // Bit 0
+        vm->rst65_mask = (a & 0x02) != 0; // Bit 1
+        vm->rst75_mask = (a & 0x04) != 0; // Bit 2
+    }
+
+    // 2. Reset RST 7.5 Latch
+    // If the Reset R7.5 bit 4 is high, clear the pending edge-triggered latch
+    if (a & 0x10) {
+        vm->rst75_latch = false;
+    }
+
+    // 3. Serial Output Enable (SOE)
+    // If SOE (bit 6) is high, process the Serial Output Data (SOD, bit 7)
+    if (a & 0x40) {
+        bool sod_bit = (a & 0x80) != 0;
+
+        // Example hook if you plan to support the SOD pin
+        // if (vm->serial_out_cb) vm->serial_out_cb(vm, sod_bit);
+    }
+}
+
+static void op_rim(Vm_8085 *vm) {
+    uint8_t result = 0;
+
+    // 1. Current Mask Status (Bits 0-2)
+    if (vm->rst55_mask) result |= 0x01;
+    if (vm->rst65_mask) result |= 0x02;
+    if (vm->rst75_mask) result |= 0x04;
+
+    // 2. Global Interrupt Enable Status (Bit 3)
+    // Represents the internal IE flip-flop state
+    if (vm->interrupts_enabled) {
+        result |= 0x08;
+    }
+
+    // 3. Pending Interrupt Status (Bits 4-6)
+    // Reflects the physical pins and latches before the CPU acknowledges them
+    if (vm->rst55_asserted) result |= 0x10; // Bit 4
+    if (vm->rst65_asserted) result |= 0x20; // Bit 5
+    if (vm->rst75_latch)    result |= 0x40; // Bit 6
+
+    // 4. Serial Input Data (SID) - Bit 7
+    // Read the physical SID pin state if your emulator supports it
+    // bool sid_bit = vm->serial_in_cb ? vm->serial_in_cb(vm) : false;
+    // if (sid_bit) result |= 0x80;
+
+    // Finally, load the constructed status byte into the Accumulator
+    vm->a = result;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Main Core Cycle Hook                                                       */
+/* -------------------------------------------------------------------------- */
+
+uint32_t vm_execute_instruction(Vm_8085 *vm) {
+    if (vm->halt) {
+        return 4; // Return minimum execution state timing if halted
+    }
+
+    // CLEAR THE SHADOW: By default, the delay shadow expires at the start of the next instruction.
+    vm->ei_delay_active = false;
+
+    uint8_t opcode = fetch_byte(vm);
+    uint32_t t_states = 0;
+
+    // Unpack the raw opcode into our distinct, aliased byte slots
+    DecodedOpcode op = {
+        .x  = (opcode >> 6) & 0x03,
+        .y  = (opcode >> 3) & 0x07,
+        .z  =  opcode       & 0x07,
+        .rp = (opcode >> 4) & 0x03
+    };
+
+    switch (op.group) {
+        // ---------------------------------------------------------------------
+        // GROUP 0: Immediates, Increment/Decrement, Direct Addressing
+        // ---------------------------------------------------------------------
+        case GRP_CTRL_MEM:
+            switch (op.grp0_sub_op) {
+                case G0_MISC_CTRL:
+                    if      (opcode == OP_NOP) { t_states = 4; }
+                    else if (opcode == OP_RIM) { op_rim(vm); t_states = 4; }
+                    else if (opcode == OP_SIM) { op_sim(vm); t_states = 4; }
+                    break;
+                case G0_LXI_DAD:
+                    if ((op.y & 1) == 0) { // LXI
+                        reg16_write(vm, op.reg_pair, fetch_word(vm), false);
+                        t_states = 10;
+                    } else {               // DAD
+                        uint16_t val = reg16_read(vm, op.reg_pair, false);
+                        uint16_t hl  = reg16_read(vm, RP_HL, false);
+                        uint32_t res = (uint32_t)hl + val;
+                        reg16_write(vm, RP_HL, (uint16_t)res, false);
+                        flag_set(vm, FLAG_CY, res > 0xFFFF);
+                        t_states = 10;
+                    }
+                    break;
+                case G0_LD_ST_A:
+                    switch (op.y) {
+                        case 0: /* STAX B */ mem_write_byte(vm, reg16_read(vm, RP_BC, false), vm->a); t_states = 7; break;
+                        case 1: /* LDAX B */ vm->a = mem_read_byte(vm, reg16_read(vm, RP_BC, false)); t_states = 7; break;
+                        case 2: /* STAX D */ mem_write_byte(vm, reg16_read(vm, RP_DE, false), vm->a); t_states = 7; break;
+                        case 3: /* LDAX D */ vm->a = mem_read_byte(vm, reg16_read(vm, RP_DE, false)); t_states = 7; break;
+                        case 4: { /* SHLD   */ uint16_t addr = fetch_word(vm); mem_write_word(vm, addr, reg16_read(vm, RP_HL, false)); t_states = 16; break; }
+                        case 5: { /* LHLD   */ uint16_t addr = fetch_word(vm); reg16_write(vm, RP_HL, mem_read_word(vm, addr), false); t_states = 16; break; }
+                        case 6: { /* STA    */ uint16_t addr = fetch_word(vm); mem_write_byte(vm, addr, vm->a); t_states = 13; break; }
+                        case 7: { /* LDA    */ uint16_t addr = fetch_word(vm); vm->a = mem_read_byte(vm, addr); t_states = 13; break; }
+                    }
+                    break;
+                case G0_INC_DEC_16:
+                    if ((op.y & 1) == 0) { // INX
+                        reg16_write(vm, op.reg_pair, reg16_read(vm, op.reg_pair, false) + 1, false);
+                    } else {               // DCX
+                        reg16_write(vm, op.reg_pair, reg16_read(vm, op.reg_pair, false) - 1, false);
+                    }
+                    t_states = 6;
+                    break;
+                case G0_INC_8: {
+                    uint8_t orig = reg8_read(vm, op.dest);
+                    uint8_t res = orig + 1;
+                    reg8_write(vm, op.dest, res);
+                    flag_set(vm, FLAG_AC, (orig & 0x0F) == 0x0F);
+                    flags_update_szp(vm, res);
+                    t_states = (op.dest == REG_M) ? 10 : 4;
+                    break;
+                }
+                case G0_DEC_8: {
+                    uint8_t orig = reg8_read(vm, op.dest);
+                    uint8_t res = orig - 1;
+                    reg8_write(vm, op.dest, res);
+                    flag_set(vm, FLAG_AC, (orig & 0x0F) == 0x00);
+                    flags_update_szp(vm, res);
+                    t_states = (op.dest == REG_M) ? 10 : 4;
+                    break;
+                }
+                case G0_MVI:
+                    reg8_write(vm, op.dest, fetch_byte(vm));
+                    t_states = (op.dest == REG_M) ? 10 : 7;
+                    break;
+                case G0_ACC_CTRL:
+                    execute_acc_op(vm, op.y);
+                    t_states = 4;
+                    break;
+            }
+            break;
+
+        // ---------------------------------------------------------------------
+        // GROUP 1: MOV dest, src and HLT
+        // ---------------------------------------------------------------------
+        case GRP_MOV_HLT:
+            if (opcode == OP_HLT) {
+                vm->halt = true;
+                t_states = 5;
+            } else {
+                reg8_write(vm, op.dest, reg8_read(vm, op.src));
+                t_states = (op.dest == REG_M || op.src == REG_M) ? 7 : 4;
+            }
+            break;
+
+        // ---------------------------------------------------------------------
+        // GROUP 2: ALU Operations (ADD, ADC, SUB, SBB, ANA, XRA, ORA, CMP)
+        // ---------------------------------------------------------------------
+        case GRP_ALU:
+            execute_alu_op(vm, op.alu_op, reg8_read(vm, op.src));
+            t_states = (op.src == REG_M) ? 7 : 4;
+            break;
+
+        // ---------------------------------------------------------------------
+        // GROUP 3: Branches, Calls, Returns, Stack, Interrupts
+        // ---------------------------------------------------------------------
+        case GRP_BRANCH:
+            switch (op.grp3_sub_op) {
+                case G3_RET_COND:
+                    if (check_condition(vm, op.cond)) {
+                        vm->pc = stack_pop(vm);
+                        t_states = 12;
+                    } else {
+                        t_states = 6;
+                    }
+                    break;
+                case G3_POP_RET_MISC:
+                    if ((op.y & 1) == 0) { // POP rp
+                        reg16_write(vm, op.reg_pair, stack_pop(vm), true);
+                        t_states = 10;
+                    } else {
+                        switch (op.y) {
+                            case 1: vm->pc = stack_pop(vm); t_states = 10; break; // RET
+                            case 5: vm->pc = reg16_read(vm, RP_HL, false); t_states = 6; break; // PCHL
+                            case 7: reg16_write(vm, RP_SP_PSW, reg16_read(vm, RP_HL, false), false); t_states = 6; break; // SPHL
+                        }
+                    }
+                    break;
+                case G3_JMP_COND:
+                    {
+                        uint16_t j_addr = fetch_word(vm);
+                        if (check_condition(vm, op.cond)) {
+                            vm->pc = j_addr;
+                            t_states = 10;
+                        } else {
+                            t_states = 7;
+                        }
+                    }
+                    break;
+                case G3_JMP_MISC:
+                    switch (op.y) {
+                        case 0: vm->pc = fetch_word(vm); t_states = 10; break; // JMP
+                        case 2: { // OUT
+                            uint8_t port = fetch_byte(vm);
+                            io_write(vm, port, vm->a);
+                            t_states = 10;
+                            break;
+                        }
+                        case 3: { // IN
+                            uint8_t port = fetch_byte(vm);
+                            vm->a = io_read(vm, port);
+                            t_states = 10;
+                            break;
+                        }
+                        case 4: { // XTHL
+                            uint16_t temp_stack = mem_read_word(vm, vm->sp);
+                            uint16_t hl_val = reg16_read(vm, RP_HL, false);
+                            mem_write_word(vm, vm->sp, hl_val);
+                            reg16_write(vm, RP_HL, temp_stack, false);
+                            t_states = 16;
+                            break;
+                        }
+                        case 5: { // XCHG
+                            uint16_t de_val = reg16_read(vm, RP_DE, false);
+                            uint16_t hl_val = reg16_read(vm, RP_HL, false);
+                            reg16_write(vm, RP_DE, hl_val, false);
+                            reg16_write(vm, RP_HL, de_val, false);
+                            t_states = 4;
+                            break;
+                        }
+                        case 6: // DI
+                            vm->interrupts_enabled = false;
+                            t_states = 4;
+                            break;
+                        case 7: // EI
+                            vm->interrupts_enabled = true;
+                            vm->ei_delay_active = true;
+                            t_states = 4;
+                            break;
+                    }
+                    break;
+                case G3_CALL_COND:
+                    {
+                        uint16_t c_addr = fetch_word(vm);
+                        if (check_condition(vm, op.cond)) {
+                            stack_push(vm, vm->pc);
+                            vm->pc = c_addr;
+                            t_states = 18;
+                        } else {
+                            t_states = 9;
+                        }
+                    }
+                    break;
+                case G3_PUSH_CALL:
+                    if ((op.y & 1) == 0) { // PUSH rp
+                        stack_push(vm, reg16_read(vm, op.reg_pair, true));
+                        t_states = 12;
+                    } else if (op.y == 1) { // CALL
+                        uint16_t call_addr = fetch_word(vm);
+                        stack_push(vm, vm->pc);
+                        vm->pc = call_addr;
+                        t_states = 18;
+                    }
+                    break;
+                case G3_ALU_IMM:
+                    execute_alu_op(vm, op.alu_op, fetch_byte(vm));
+                    t_states = 7;
+                    break;
+                case G3_RST:
+                    stack_push(vm, vm->pc);
+                    vm->pc = op.y * 8;
+                    t_states = 12;
+                    break;
+            }
+            break;
+    }
+
+    assert(t_states != 0);
+    return t_states;
+}
+
+// Define the hardware vectors for clarity
+#define VECTOR_TRAP  0x0024 // RST 4.5
+#define VECTOR_RST75 0x003C
+#define VECTOR_RST65 0x0034
+#define VECTOR_RST55 0x002C
+
+static uint32_t service_interrupts(Vm_8085 *vm) {// 1. TRAP (NMI) - Highest Priority
+    // Note: Bypasses interrupts_enabled and ei_delay_active
+    if (vm->trap_asserted) {
+        vm->trap_asserted = false; // Acknowledge
+        vm->interrupts_enabled = false;
+        vm->halt = false;
+
+        stack_push(vm, vm->pc);
+        vm->pc = VECTOR_TRAP;
+        return 12; // Typical T-states for hardware interrupt push
+    }
+
+    // Guard check for all maskable interrupts
+    if (!vm->interrupts_enabled || vm->ei_delay_active) {
+        return 0; // Proceed with normal execution
+    }
+
+    // 2. RST 7.5 - Edge triggered (latched)
+    if (vm->rst75_latch && !vm->rst75_mask) {
+        vm->rst75_latch = false; // Clear latch on service
+        vm->interrupts_enabled = false;
+        vm->halt = false;
+
+        stack_push(vm, vm->pc);
+        vm->pc = VECTOR_RST75;
+        return 12;
+    }
+
+    // 3. RST 6.5 - Level triggered
+    if (vm->rst65_asserted && !vm->rst65_mask) {
+        vm->interrupts_enabled = false;
+        vm->halt = false;
+
+        stack_push(vm, vm->pc);
+        vm->pc = VECTOR_RST65;
+        return 12;
+    }
+
+    // 4. RST 5.5 - Level triggered
+    if (vm->rst55_asserted && !vm->rst55_mask) {
+        vm->interrupts_enabled = false;
+        vm->halt = false;
+
+        stack_push(vm, vm->pc);
+        vm->pc = VECTOR_RST55;
+        return 12;
+    }
+
+    // 5. INTR - Lowest Priority (Your existing code)
+    if (vm->intr_asserted) {
+        vm->interrupts_enabled = false;
+        vm->halt = false;
+
+        uint8_t vector_op = vm->intr_vector_opcode;
+
+        // Handle standard RST n instructions
+        if ((vector_op & RST_OPCODE_MASK) == RST_BASE_OPCODE) {
+            stack_push(vm, vm->pc);
+            vm->pc = (vector_op & RST_ADDR_MASK);
+            return T_STATES_INTR_ACK_RST;
+        }
+        // Handle CALL ...
+    }
+
+    return 0; // No interrupts firing
+}
+
+uint32_t vm_execute(Vm_8085 *vm, uint32_t t_states_goal) {
+    uint32_t t_states_executed = 0;
+    uint32_t t_states = 0;
+
+    for (; t_states_executed < t_states_goal; t_states_executed += t_states) {
+        if (vm->loop_cb) vm->loop_cb(vm);
+        t_states = service_interrupts(vm);
+        if (t_states != 0) continue; // Skip the standard fetch-execute cycle
+        t_states = vm_execute_instruction(vm);
+    }
+
+    return t_states_executed;
+}
+
+#define SCREEN_WIDTH 240
+#define SCREEN_HEIGHT 64
+
+#define WEBASM_EXPORT __attribute__((visibility("default")))
+
+#if 0
+static const uint8_t game_binary[] = {
+    0x06, 0x00,             // 0x0000: MVI B, 0x00
+    // FRAME LOOP
+    0x21, 0x00, 0x80,       // 0x0002: LXI H, 0x8000
+    0x16, 0x00,             // 0x0005: MVI D, 0x00
+    // LOOP_Y
+    0x1E, 0x00,             // 0x0007: MVI E, 0x00
+    // LOOP_X
+    0x7A,                   // 0x0009: MOV A, D
+    0x80,                   // 0x000A: ADD B
+    0x4F,                   // 0x000B: MOV C, A
+    0x7B,                   // 0x000C: MOV A, E
+    0x80,                   // 0x000D: ADD B
+    0xA9,                   // 0x000E: XRA C
+    0x77,                   // 0x000F: MOV M, A
+    0x23,                   // 0x0010: INX H
+    0x1C,                   // 0x0011: INR E
+    0x7B,                   // 0x0012: MOV A, E
+    0xFE, 0xF0,             // 0x0013: CPI 0xF0 (240)
+    0xC2, 0x09, 0x00,       // 0x0015: JNZ 0x0009
+    0x14,                   // 0x0018: INR D
+    0x7A,                   // 0x0019: MOV A, D
+    0xFE, 0x40,             // 0x001A: CPI 0x40 (64)
+    0xC2, 0x07, 0x00,       // 0x001C: JNZ 0x0007
+    0x04,                   // 0x001F: INR B
+    0xC3, 0x02, 0x00        // 0x0020: JMP 0x0002
+};
+#else
+static uint8_t game_binary[] = {
+    0x21, 0x00, 0x80, 0x11, 0x34, 0x12, 0x01, 0x00, 0x3C, 0x7A, 0x83, 0x3C, 0x0F, 0x53, 0x5F, 0xE6,
+    0x01, 0xC2, 0x19, 0x00, 0x3E, 0x00, 0xC3, 0x1B, 0x00, 0x3E, 0xFF, 0x77, 0x23, 0x0B, 0x78, 0xB1,
+    0xC2, 0x09, 0x00, 0x21, 0xF1, 0x80, 0x3E, 0x01, 0x32, 0xFE, 0x7F, 0x3E, 0x01, 0x32, 0xFF, 0x7F,
+    0x06, 0x00, 0xE5, 0x11, 0x0F, 0xFF, 0x19, 0x7E, 0xFE, 0xFF, 0xC2, 0x3E, 0x00, 0x04, 0xE1, 0xE5,
+    0x11, 0x10, 0xFF, 0x19, 0x7E, 0xFE, 0xFF, 0xC2, 0x4B, 0x00, 0x04, 0xE1, 0xE5, 0x11, 0x11, 0xFF,
+    0x19, 0x7E, 0xFE, 0xFF, 0xC2, 0x58, 0x00, 0x04, 0xE1, 0xE5, 0x11, 0xFF, 0xFF, 0x19, 0x7E, 0xFE,
+    0xFF, 0xC2, 0x65, 0x00, 0x04, 0xE1, 0xE5, 0x11, 0x01, 0x00, 0x19, 0x7E, 0xFE, 0xFF, 0xC2, 0x72,
+    0x00, 0x04, 0xE1, 0xE5, 0x11, 0xEF, 0x00, 0x19, 0x7E, 0xFE, 0xFF, 0xC2, 0x7F, 0x00, 0x04, 0xE1,
+    0xE5, 0x11, 0xF0, 0x00, 0x19, 0x7E, 0xFE, 0xFF, 0xC2, 0x8C, 0x00, 0x04, 0xE1, 0xE5, 0x11, 0xF1,
+    0x00, 0x19, 0x7E, 0xFE, 0xFF, 0xC2, 0x99, 0x00, 0x04, 0xE1, 0x7E, 0xFE, 0xFF, 0xCA, 0xAD, 0x00,
+    0x78, 0xFE, 0x03, 0x3E, 0xFF, 0xCA, 0xBF, 0x00, 0x3E, 0x00, 0xC3, 0xBF, 0x00, 0x78, 0xFE, 0x02,
+    0xDA, 0xBD, 0x00, 0xFE, 0x04, 0xD2, 0xBD, 0x00, 0x3E, 0xFF, 0xC3, 0xBF, 0x00, 0x3E, 0x00, 0xE5,
+    0x4F, 0x7C, 0xC6, 0x40, 0x67, 0x71, 0xE1, 0x23, 0x3A, 0xFF, 0x7F, 0x3C, 0x32, 0xFF, 0x7F, 0xFE,
+    0xEF, 0xC2, 0x30, 0x00, 0x23, 0x23, 0x3A, 0xFE, 0x7F, 0x3C, 0x32, 0xFE, 0x7F, 0xFE, 0x3F, 0xC2,
+    0x2B, 0x00, 0x21, 0x00, 0xC0, 0x11, 0x00, 0x80, 0x01, 0x00, 0x3C, 0x7E, 0x12, 0x23, 0x13, 0x0B,
+    0x78, 0xB1, 0xC2, 0xEB, 0x00, 0xC3, 0x23, 0x00
+};
+#endif
+static const uint32_t game_binary_len = sizeof(game_binary);
+
+
+// --- 3. Outer Machine State Structure ---
+typedef struct {
+    Vm_8085 cpu;
+    // 32-bit RGBA buffer that JavaScript will read directly to draw to the HTML5 canvas
+    uint8_t canvas_buffer[SCREEN_WIDTH * SCREEN_HEIGHT * 4];
+} Pc8201Machine;
+
+// Globally instantiate our machine state
+static Pc8201Machine machine;
+
+// --- 5. System-Specific Peripherals: Translate 8085 RAM into RGBA Canvas Pixels ---
+void update_canvas_buffer(Pc8201Machine* mach) {
+    uint16_t vram_start = 0x8000;
+
+    // 240 * 64 = 15360 total bytes written by the plasma code
+    for (int y = 0; y < SCREEN_HEIGHT; y++) {
+        for (int x = 0; x < SCREEN_WIDTH; x++) {
+            int linear_pixel = y * SCREEN_WIDTH + x;
+
+            // Read sequentially through the full 15,360 bytes of VRAM
+            uint16_t target_mem = vram_start + linear_pixel;
+            uint8_t pixel_data = mach->cpu.memory[target_mem];
+
+            int canvas_idx = linear_pixel * 4;
+
+            // Ensure strict 4-byte RGBA alignment
+            mach->canvas_buffer[canvas_idx]     = pixel_data; // R
+            mach->canvas_buffer[canvas_idx + 1] = pixel_data; // G
+            mach->canvas_buffer[canvas_idx + 2] = pixel_data; // Blue
+            mach->canvas_buffer[canvas_idx + 3] = 255;        // Alpha
+        }
+    }
+}
+
+WEBASM_EXPORT void init_machine(uint16_t random_seed) {
+    // Clear memory & registers
+
+    for (uint32_t i = 0; i < sizeof(machine); ++i) *(uint8_t*)(&machine) = 0;
+
+    game_binary[4] = (uint8_t)random_seed;
+    game_binary[5] = (uint8_t)(random_seed >> 8);
+
+    // Load the hardcoded binary directly into the CPU's memory array at address 0x0000
+    for (uint32_t i = 0; i < game_binary_len; i++) {
+        machine.cpu.memory[i] = game_binary[i];
+    }
+}
+
+WEBASM_EXPORT uint8_t* get_canvas_buffer() {
+    return machine.canvas_buffer;
+}
+
+WEBASM_EXPORT int32_t run_frame(int32_t instruction_count) {
+    // Run a batch of instructions for this browser frame
+    int32_t executed = vm_execute(&machine.cpu, instruction_count);
+    // Update the visual buffer based on current state of 8085 RAM
+    update_canvas_buffer(&machine);
+    return executed;
+}

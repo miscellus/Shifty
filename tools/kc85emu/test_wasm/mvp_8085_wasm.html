@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Wasm Canvas Shared Memory Example</title>
+    <style>
+        *, *:before, *:after {
+            box-sizing: border-box;
+        }
+        html { height: 100%; }
+        body {
+            background: #7e8776;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            margin: 0;
+            padding: 1em;
+        }
+        canvas {
+            border: 4px solid #000;
+            image-rendering: pixelated;
+            aspect 240/64;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="canvas" width="240" height="64"></canvas>
+
+    <script>
+        const ctx = canvas.getContext('2d');
+        const WIDTH = 240;
+        const HEIGHT = 64;
+
+        let frame = 0;
+
+        async function initWasm() {
+            // 1. Fetch and compile the standalone wasm file
+            const response = await fetch('mvp_8085_wasm.wasm');
+            const bytes = await response.arrayBuffer();
+            const { instance } = await WebAssembly.instantiate(bytes);
+
+            const { init_machine, get_canvas_buffer, run_frame, memory } = instance.exports;
+
+            // Initialize the 8085 state and load the embedded binary
+            const cryptoArray = new Uint16Array(1);
+            window.crypto.getRandomValues(cryptoArray);
+            const randomSeed = cryptoArray[0];
+            init_machine(randomSeed);
+
+            const bufferPointer = get_canvas_buffer();
+            const bufferLength = WIDTH * HEIGHT * 4;
+            const imgData = ctx.createImageData(WIDTH, HEIGHT);
+
+            let timeLast = performance.now();
+            let clockPeriodDebt = 0;
+
+            (function renderLoop(timeNow) {
+                // Run 500 emulated 8085 instructions per browser animation frame
+                let deltaTime = timeNow - timeLast;
+                if (deltaTime > 0.1) deltaTime = 0.1;
+
+                const systemClockFreq = 2457600;
+                const numClockPeriods = Math.max(0, systemClockFreq * deltaTime - clockPeriodDebt);
+                clockPeriodDebt = run_frame(numClockPeriods) - numClockPeriods;
+
+                // Read the updated canvas pixels right out of Wasm shared memory
+
+                const pixelView = new Uint8ClampedArray(memory.buffer, bufferPointer, bufferLength);
+                imgData.data.set(pixelView);
+                ctx.putImageData(imgData, 0, 0);
+
+                requestAnimationFrame(renderLoop);
+            })(timeLast);
+        }
+
+        initWasm();
+    </script>
+</body>
+</html>
