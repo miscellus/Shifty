@@ -2,6 +2,7 @@
 
 clang --target=wasm32 \
       -O3 \
+      -DTARGET_WEB \
       -nostdlib \
       -Wl,--no-entry \
       -Wl,--export-all \

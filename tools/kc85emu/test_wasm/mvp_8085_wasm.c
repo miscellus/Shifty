@@ -13,7 +13,7 @@ enum {
 };
 
 // 8-bit Registers (Bits 0-2 or 3-5)
-typedef uint8_t Reg8;
+typedef struct { uint8_t v; } Reg8;
 enum {
     REG_B = 0,
     REG_C = 1,
@@ -26,16 +26,14 @@ enum {
 };
 
 // 16-bit Register Pairs (Bits 4-5)
-typedef uint8_t RegPair;
-enum {
-    RP_BC     = 0,
-    RP_DE     = 1,
-    RP_HL     = 2,
-    RP_SP_PSW = 3  // Stack Pointer (or Program Status Word for PUSH/POP)
-};
+typedef struct { uint8_t v; } Reg16;
+#define RP_BC     ((Reg16){0})
+#define RP_DE     ((Reg16){1})
+#define RP_HL     ((Reg16){2})
+#define RP_SP_PSW ((Reg16){3}) // Stack Pointer (or Program Status Word for PUSH/POP)
 
 // ALU Operations (Bits 3-5 in Group 2 & Group 3 Immediates)
-typedef uint8_t AluOp;
+typedef struct { uint8_t v; } AluOp;
 enum {
     ALU_ADD = 0,
     ALU_ADC = 1,
@@ -47,8 +45,20 @@ enum {
     ALU_CMP = 7
 };
 
+typedef struct { uint8_t v; } AccCyOp;
+enum {
+    ACC_CY_RLC = 0,
+    ACC_CY_RRC = 1,
+    ACC_CY_RAL = 2,
+    ACC_CY_RAR = 3,
+    ACC_CY_DAA = 4,
+    ACC_CY_CMA = 5,
+    ACC_CY_STC = 6,
+    ACC_CY_CMC = 7
+};
+
 // Branch Conditions (Bits 3-5 in Group 3)
-typedef uint8_t ConditionKind;
+typedef struct { uint8_t v; } ConditionKind;
 enum {
     COND_NZ = 0, // Not Zero
     COND_Z  = 1, // Zero
@@ -112,20 +122,12 @@ enum {
     T_STATES_INTR_ACK_CALL = 18  // 3-byte CALL acknowledgment timing
 };
 
-typedef struct {
-    union { uint8_t x; uint8_t group; };
-    union { uint8_t y; uint8_t dest; uint8_t alu_op; uint8_t cond; };
-    union { uint8_t z; uint8_t src; uint8_t grp0_sub_op; uint8_t grp3_sub_op; };
-    union { uint8_t rp; uint8_t reg_pair; };
-} DecodedOpcode;
-
 typedef struct Vm_8085 Vm_8085;
 
 typedef bool (* Vm_8085_Memory_Cb)(Vm_8085 *vm, uint16_t address, bool write, uint8_t *in_out_data);
 typedef bool (* Vm_8085_Io_Cb)(Vm_8085* vm, uint8_t port, bool is_out, uint8_t *in_out_data);
 typedef bool (* Vm_8085_Loop_Cb)(Vm_8085* vm);
 
-typedef uint8_t Flags;
 enum {
     FLAG_CY = (1 << 0),
     FLAG_P  = (1 << 2),
@@ -134,8 +136,34 @@ enum {
     FLAG_S  = (1 << 7),
 };
 
+typedef struct {
+    bool cy, p, ac, z, s;
+} Flags;
+
+static inline uint8_t flags_pack(Flags flags) {
+    uint8_t packed_flags = 0;
+    if (flags.cy) packed_flags |= FLAG_CY;
+    if (flags.p)  packed_flags |= FLAG_P;
+    if (flags.ac) packed_flags |= FLAG_AC;
+    if (flags.z)  packed_flags |= FLAG_Z;
+    if (flags.s)  packed_flags |= FLAG_S;
+    return packed_flags;
+}
+
+static inline Flags flags_unpack(uint8_t packed_flags) {
+    Flags flags = {0};
+    flags.cy = (packed_flags & FLAG_CY) != 0;
+    flags.p  = (packed_flags & FLAG_P)  != 0;
+    flags.ac = (packed_flags & FLAG_AC) != 0;
+    flags.z  = (packed_flags & FLAG_Z)  != 0;
+    flags.s  = (packed_flags & FLAG_S)  != 0;
+    return flags;
+}
+
 struct Vm_8085 {
-    uint8_t a, flags;
+    Flags flags;
+
+    uint8_t a;
     uint8_t b, c;
     uint8_t d, e;
     uint8_t h, l;
@@ -162,6 +190,7 @@ struct Vm_8085 {
     // --- Existing INTR state (Priority 5) ---
     bool intr_asserted;
     uint8_t intr_vector_opcode;
+    uint16_t intr_call_address;
 
     Vm_8085_Memory_Cb mem_cb;
     Vm_8085_Io_Cb io_cb;
@@ -172,15 +201,6 @@ struct Vm_8085 {
 
     uint8_t memory[65536];
 };
-
-static inline bool flag_get(Vm_8085 *vm, Flags flag) {
-    return (vm->flags & flag) != 0;
-}
-
-static inline void flag_set(Vm_8085 *vm, Flags flag, bool condition) {
-    if (condition) vm->flags |= flag;
-    else           vm->flags &= ~flag;
-}
 
 //
 // Memory & Hardware Abstractions
@@ -236,18 +256,18 @@ static inline uint16_t stack_pop(Vm_8085 *vm) {
 //
 
 static inline void flags_update_szp(Vm_8085 *vm, uint8_t result) {
-    flag_set(vm, FLAG_Z, result == 0);
-    flag_set(vm, FLAG_S, (result & 0x80) != 0);
+    vm->flags.z = result == 0;
+    vm->flags.s = (result & 0x80) != 0;
 
     // Bitwise parity check
     result ^= result >> 4;
     result ^= result >> 2;
     result ^= result >> 1;
-    flag_set(vm, FLAG_P, !(result & 1));
+    vm->flags.p = (result & 1) != 0;
 }
 
 uint8_t reg8_read(Vm_8085 *vm, Reg8 reg_index) {
-    switch (reg_index) {
+    switch (reg_index.v) {
         case 0: return vm->b;
         case 1: return vm->c;
         case 2: return vm->d;
@@ -256,13 +276,13 @@ uint8_t reg8_read(Vm_8085 *vm, Reg8 reg_index) {
         case 5: return vm->l;
         case 6: return mem_read_byte(vm, (vm->h << 8) | vm->l);
         case 7: return vm->a;
-        default: assert(0 && "Invalid reg_index");
+        default: assert(0 && "Invalid reg8");
     }
     return 0;
 }
 
 void reg8_write(Vm_8085 *vm, Reg8 reg_index, uint8_t val) {
-    switch (reg_index) {
+    switch (reg_index.v) {
         case 0: vm->b = val; break;
         case 1: vm->c = val; break;
         case 2: vm->d = val; break;
@@ -271,25 +291,25 @@ void reg8_write(Vm_8085 *vm, Reg8 reg_index, uint8_t val) {
         case 5: vm->l = val; break;
         case 6: mem_write_byte(vm, (vm->h << 8) | vm->l, val); break;
         case 7: vm->a = val; break;
-        default: assert(0 && "Invalid reg_index");
+        default: assert(0 && "Invalid reg8");
     }
 }
 
-uint16_t reg16_read(Vm_8085 *vm, RegPair rp_index, bool is_psw) {
-    switch (rp_index) {
+uint16_t reg16_read(Vm_8085 *vm, Reg16 rp_index, bool is_psw) {
+    switch (rp_index.v) {
         case 0: return (vm->b << 8) | vm->c;
         case 1: return (vm->d << 8) | vm->e;
         case 2: return (vm->h << 8) | vm->l;
-        case 3: return is_psw ? ((vm->a << 8) | vm->flags) : vm->sp;
-        default: assert(0 && "Invalid rp_index");
+        case 3: return is_psw ? ((vm->a << 8) | flags_pack(vm->flags)) : vm->sp;
+        default: assert(0 && "Invalid reg16");
     }
     return 0;
 }
 
-void reg16_write(Vm_8085 *vm, RegPair rp_index, uint16_t val, bool is_psw) {
+void reg16_write(Vm_8085 *vm, Reg16 rp_index, uint16_t val, bool is_psw) {
     uint8_t hi = (uint8_t)(val >> 8);
     uint8_t lo = (uint8_t)val;
-    switch (rp_index) {
+    switch (rp_index.v) {
         case 0: vm->b = hi; vm->c = lo; break;
         case 1: vm->d = hi; vm->e = lo; break;
         case 2: vm->h = hi; vm->l = lo; break;
@@ -297,13 +317,13 @@ void reg16_write(Vm_8085 *vm, RegPair rp_index, uint16_t val, bool is_psw) {
             if (is_psw) {
                 vm->a = hi;
                 // 8085 HW enforcing: Bit 1 is 1, Bits 3/5 are 0
-                vm->flags = (lo & 0xD7) | 0x02;
+                vm->flags = flags_unpack((lo & 0xD7) | 0x02);
             }
             else {
                 vm->sp = val;
             }
             break;
-        default: assert(0 && "Invalid rp_index");
+        default: assert(0 && "Invalid reg16");
     }
 }
 
@@ -331,24 +351,24 @@ static inline void io_write(Vm_8085* vm, uint16_t address, uint8_t data) {
 // ALU Core
 //
 
-bool check_condition(Vm_8085 *vm, uint8_t condition_index) {
-    switch ((ConditionKind)condition_index) {
-        case COND_NZ: return !flag_get(vm, FLAG_Z);
-        case COND_Z:  return flag_get(vm, FLAG_Z);
-        case COND_NC: return !flag_get(vm, FLAG_CY);
-        case COND_C:  return flag_get(vm, FLAG_CY);
-        case COND_PO: return !flag_get(vm, FLAG_P);
-        case COND_PE: return flag_get(vm, FLAG_P);
-        case COND_P:  return !flag_get(vm, FLAG_S);
-        case COND_M:  return flag_get(vm, FLAG_S);
+bool check_condition(Vm_8085 *vm, ConditionKind cond) {
+    switch (cond.v) {
+        case COND_NZ: return !vm->flags.z;
+        case COND_Z:  return  vm->flags.z;
+        case COND_NC: return !vm->flags.cy;
+        case COND_C:  return  vm->flags.cy;
+        case COND_PO: return !vm->flags.p;
+        case COND_PE: return  vm->flags.p;
+        case COND_P:  return !vm->flags.s;
+        case COND_M:  return  vm->flags.s;
     }
     return false;
 }
 
 static inline void alu_add(Vm_8085 *vm, uint8_t operand, uint8_t cy_in) {
     uint16_t res = vm->a + operand + cy_in;
-    flag_set(vm, FLAG_AC, ((vm->a & 0x0F) + (operand & 0x0F) + cy_in) > 0x0F);
-    flag_set(vm, FLAG_CY, res > 0xFF);
+    vm->flags.ac = ((vm->a & 0x0F) + (operand & 0x0F) + cy_in) > 0x0F;
+    vm->flags.cy = res > 0xFF;
     vm->a = (uint8_t)res;
     flags_update_szp(vm, vm->a);
 }
@@ -359,108 +379,96 @@ static inline void alu_sub(Vm_8085 *vm, uint8_t operand, uint8_t borrow_in, bool
     uint16_t internal_res = vm->a + inv_operand + carry_in;
 
     // The AC flag is the carry out of bit 3 from this internal addition
-    flag_set(vm, FLAG_AC, ((vm->a & 0x0F) + (inv_operand & 0x0F) + carry_in) > 0x0F);
-    flag_set(vm, FLAG_CY, !(internal_res > 0xFF)); // True borrow is inverted internal carry
+    vm->flags.ac = ((vm->a & 0x0F) + (inv_operand & 0x0F) + carry_in) > 0x0F;
+    vm->flags.cy = !(internal_res > 0xFF); // True borrow is inverted internal carry
 
     if (update_acc) vm->a = (uint8_t)internal_res;
     flags_update_szp(vm, (uint8_t)internal_res);
 }
 
 void execute_alu_op(Vm_8085 *vm, AluOp op, uint8_t operand) {
-
-    enum {
-        ALU_ADD = 0,
-        ALU_ADC = 1,
-        ALU_SUB = 2,
-        ALU_SBB = 3,
-        ALU_ANA = 4,
-        ALU_XRA = 5,
-        ALU_ORA = 6,
-        ALU_CMP = 7,
-    };
-
-    switch (op) {
+    switch (op.v) {
         case ALU_ADD: alu_add(vm, operand, 0); break;
-        case ALU_ADC: alu_add(vm, operand, flag_get(vm, FLAG_CY)); break;
+        case ALU_ADC: alu_add(vm, operand, vm->flags.cy ? 1 : 0); break;
         case ALU_SUB: alu_sub(vm, operand, 0, true); break;
-        case ALU_SBB: alu_sub(vm, operand, flag_get(vm, FLAG_CY), true); break;
+        case ALU_SBB: alu_sub(vm, operand, vm->flags.cy ? 1 : 0, true); break;
         case ALU_ANA:
             vm->a &= operand;
-            flag_set(vm, FLAG_CY, 0);
-            flag_set(vm, FLAG_AC, 1); // Documented Intel standard for ANA
+            vm->flags.cy = false;
+            vm->flags.ac = true; // Documented Intel standard for ANA
             flags_update_szp(vm, vm->a);
             break;
         case ALU_XRA:
             vm->a ^= operand;
-            flag_set(vm, FLAG_CY, 0);
-            flag_set(vm, FLAG_AC, 0);
+            vm->flags.cy = false;
+            vm->flags.ac = false;
             flags_update_szp(vm, vm->a);
             break;
         case ALU_ORA:
             vm->a |= operand;
-            flag_set(vm, FLAG_CY, 0);
-            flag_set(vm, FLAG_AC, 0);
+            vm->flags.cy = false;
+            vm->flags.ac = false;
             flags_update_szp(vm, vm->a);
             break;
         case ALU_CMP: alu_sub(vm, operand, 0, false); break;
     }
 }
 
-void execute_acc_op(Vm_8085 *vm, uint8_t op_index) {
+void execute_acc_op(Vm_8085 *vm, AccCyOp op_index) {
     uint8_t a = vm->a;
-    switch (op_index) {
-        case 0: { // RLC
+    switch (op_index.v) {
+        case ACC_CY_RLC: {
             uint8_t bit7 = (a >> 7) & 1;
             vm->a = (a << 1) | bit7;
-            flag_set(vm, FLAG_CY, bit7);
+            vm->flags.cy = bit7;
             break;
         }
-        case 1: { // RRC
+        case ACC_CY_RRC: {
             uint8_t bit0 = a & 1;
             vm->a = (a >> 1) | (bit0 << 7);
-            flag_set(vm, FLAG_CY, bit0);
+            vm->flags.cy = bit0 != 0;
             break;
         }
-        case 2: { // RAL
-            uint8_t cy = flag_get(vm, FLAG_CY);
-            flag_set(vm, FLAG_CY, (a >> 7) & 1);
+        case ACC_CY_RAL: {
+            uint8_t cy = vm->flags.cy ? 1 : 0;
+            vm->flags.cy = ((a >> 7) & 1) != 0;
             vm->a = (a << 1) | cy;
             break;
         }
-        case 3: { // RAR
-            uint8_t cy = flag_get(vm, FLAG_CY);
-            flag_set(vm, FLAG_CY, a & 1);
+        case ACC_CY_RAR: {
+            uint8_t cy = vm->flags.cy ? 1 : 0;
+            vm->flags.cy = (a & 1) != 0;
             vm->a = (a >> 1) | (cy << 7);
             break;
         }
-        case 4: { // DAA
+        case ACC_CY_DAA: {
             uint16_t res = a;
             uint8_t correction = 0;
-            if ((a & 0x0F) > 9 || flag_get(vm, FLAG_AC)) {
+            if ((a & 0x0F) > 9 || vm->flags.ac) {
                 correction |= 0x06;
-                flag_set(vm, FLAG_AC, 1);
+                vm->flags.ac = true;
             } else {
-                flag_set(vm, FLAG_AC, 0);
+                vm->flags.ac = false;
             }
-            if (a > 0x99 || flag_get(vm, FLAG_CY)) {
+            if (a > 0x99 || vm->flags.cy) {
                 correction |= 0x60;
-                flag_set(vm, FLAG_CY, 1);
+                vm->flags.cy = true;
             }
             res += correction;
             vm->a = (uint8_t)res;
             flags_update_szp(vm, vm->a);
             break;
         }
-        case 5: { // CMA
+        case ACC_CY_CMA: {
             vm->a = ~a;
             break;
         }
-        case 6: { // STC
-            flag_set(vm, FLAG_CY, 1);
+        case ACC_CY_STC: {
+            vm->flags.cy = true;
             break;
         }
-        case 7: { // CMC
-            flag_set(vm, FLAG_CY, !flag_get(vm, FLAG_CY));
+        case ACC_CY_CMC: {
+            vm->flags.cy = !vm->flags.cy;
             break;
         }
     }
@@ -487,6 +495,7 @@ static void op_sim(Vm_8085 *vm) {
     // If SOE (bit 6) is high, process the Serial Output Data (SOD, bit 7)
     if (a & 0x40) {
         bool sod_bit = (a & 0x80) != 0;
+        (void)sod_bit;
 
         // Example hook if you plan to support the SOD pin
         // if (vm->serial_out_cb) vm->serial_out_cb(vm, sod_bit);
@@ -538,19 +547,24 @@ uint32_t vm_execute_instruction(Vm_8085 *vm) {
     uint32_t t_states = 0;
 
     // Unpack the raw opcode into our distinct, aliased byte slots
-    DecodedOpcode op = {
-        .x  = (opcode >> 6) & 0x03,
-        .y  = (opcode >> 3) & 0x07,
-        .z  =  opcode       & 0x07,
-        .rp = (opcode >> 4) & 0x03
+    struct {
+        uint8_t x;
+        union { uint8_t y; Reg8 dest; AluOp alu_op; AccCyOp acc_cy_op; ConditionKind cond; };
+        union { uint8_t z; Reg8 src; };
+        Reg16 reg16;
+    } op = {
+        .x     = (opcode >> 6) & 0x03,
+        .y     = (opcode >> 3) & 0x07,
+        .z     =  opcode       & 0x07,
+        .reg16 = {(opcode >> 4) & 0x03},
     };
 
-    switch (op.group) {
+    switch (op.x) {
         // ---------------------------------------------------------------------
         // GROUP 0: Immediates, Increment/Decrement, Direct Addressing
         // ---------------------------------------------------------------------
         case GRP_CTRL_MEM:
-            switch (op.grp0_sub_op) {
+            switch (op.z) {
                 case G0_MISC_CTRL:
                     if      (opcode == OP_NOP) { t_states = 4; }
                     else if (opcode == OP_RIM) { op_rim(vm); t_states = 4; }
@@ -558,14 +572,14 @@ uint32_t vm_execute_instruction(Vm_8085 *vm) {
                     break;
                 case G0_LXI_DAD:
                     if ((op.y & 1) == 0) { // LXI
-                        reg16_write(vm, op.reg_pair, fetch_word(vm), false);
+                        reg16_write(vm, op.reg16, fetch_word(vm), false);
                         t_states = 10;
                     } else {               // DAD
-                        uint16_t val = reg16_read(vm, op.reg_pair, false);
+                        uint16_t val = reg16_read(vm, op.reg16, false);
                         uint16_t hl  = reg16_read(vm, RP_HL, false);
                         uint32_t res = (uint32_t)hl + val;
                         reg16_write(vm, RP_HL, (uint16_t)res, false);
-                        flag_set(vm, FLAG_CY, res > 0xFFFF);
+                        vm->flags.cy = res > 0xFFFF;
                         t_states = 10;
                     }
                     break;
@@ -583,9 +597,9 @@ uint32_t vm_execute_instruction(Vm_8085 *vm) {
                     break;
                 case G0_INC_DEC_16:
                     if ((op.y & 1) == 0) { // INX
-                        reg16_write(vm, op.reg_pair, reg16_read(vm, op.reg_pair, false) + 1, false);
+                        reg16_write(vm, op.reg16, reg16_read(vm, op.reg16, false) + 1, false);
                     } else {               // DCX
-                        reg16_write(vm, op.reg_pair, reg16_read(vm, op.reg_pair, false) - 1, false);
+                        reg16_write(vm, op.reg16, reg16_read(vm, op.reg16, false) - 1, false);
                     }
                     t_states = 6;
                     break;
@@ -593,26 +607,26 @@ uint32_t vm_execute_instruction(Vm_8085 *vm) {
                     uint8_t orig = reg8_read(vm, op.dest);
                     uint8_t res = orig + 1;
                     reg8_write(vm, op.dest, res);
-                    flag_set(vm, FLAG_AC, (orig & 0x0F) == 0x0F);
+                    vm->flags.ac = (orig & 0x0F) == 0x0F;
                     flags_update_szp(vm, res);
-                    t_states = (op.dest == REG_M) ? 10 : 4;
+                    t_states = (op.dest.v == REG_M) ? 10 : 4;
                     break;
                 }
                 case G0_DEC_8: {
                     uint8_t orig = reg8_read(vm, op.dest);
                     uint8_t res = orig - 1;
                     reg8_write(vm, op.dest, res);
-                    flag_set(vm, FLAG_AC, (orig & 0x0F) == 0x00);
+                    vm->flags.ac = (orig & 0x0F) == 0x00;
                     flags_update_szp(vm, res);
-                    t_states = (op.dest == REG_M) ? 10 : 4;
+                    t_states = (op.dest.v == REG_M) ? 10 : 4;
                     break;
                 }
                 case G0_MVI:
                     reg8_write(vm, op.dest, fetch_byte(vm));
-                    t_states = (op.dest == REG_M) ? 10 : 7;
+                    t_states = (op.dest.v == REG_M) ? 10 : 7;
                     break;
                 case G0_ACC_CTRL:
-                    execute_acc_op(vm, op.y);
+                    execute_acc_op(vm, op.acc_cy_op);
                     t_states = 4;
                     break;
             }
@@ -627,7 +641,7 @@ uint32_t vm_execute_instruction(Vm_8085 *vm) {
                 t_states = 5;
             } else {
                 reg8_write(vm, op.dest, reg8_read(vm, op.src));
-                t_states = (op.dest == REG_M || op.src == REG_M) ? 7 : 4;
+                t_states = (op.dest.v == REG_M || op.src.v == REG_M) ? 7 : 4;
             }
             break;
 
@@ -636,14 +650,14 @@ uint32_t vm_execute_instruction(Vm_8085 *vm) {
         // ---------------------------------------------------------------------
         case GRP_ALU:
             execute_alu_op(vm, op.alu_op, reg8_read(vm, op.src));
-            t_states = (op.src == REG_M) ? 7 : 4;
+            t_states = (op.src.v == REG_M) ? 7 : 4;
             break;
 
         // ---------------------------------------------------------------------
         // GROUP 3: Branches, Calls, Returns, Stack, Interrupts
         // ---------------------------------------------------------------------
         case GRP_BRANCH:
-            switch (op.grp3_sub_op) {
+            switch (op.z) {
                 case G3_RET_COND:
                     if (check_condition(vm, op.cond)) {
                         vm->pc = stack_pop(vm);
@@ -654,7 +668,7 @@ uint32_t vm_execute_instruction(Vm_8085 *vm) {
                     break;
                 case G3_POP_RET_MISC:
                     if ((op.y & 1) == 0) { // POP rp
-                        reg16_write(vm, op.reg_pair, stack_pop(vm), true);
+                        reg16_write(vm, op.reg16, stack_pop(vm), true);
                         t_states = 10;
                     } else {
                         switch (op.y) {
@@ -731,7 +745,7 @@ uint32_t vm_execute_instruction(Vm_8085 *vm) {
                     break;
                 case G3_PUSH_CALL:
                     if ((op.y & 1) == 0) { // PUSH rp
-                        stack_push(vm, reg16_read(vm, op.reg_pair, true));
+                        stack_push(vm, reg16_read(vm, op.reg16, true));
                         t_states = 12;
                     } else if (op.y == 1) { // CALL
                         uint16_t call_addr = fetch_word(vm);
@@ -763,8 +777,13 @@ uint32_t vm_execute_instruction(Vm_8085 *vm) {
 #define VECTOR_RST65 0x0034
 #define VECTOR_RST55 0x002C
 
-static uint32_t service_interrupts(Vm_8085 *vm) {// 1. TRAP (NMI) - Highest Priority
-    // Note: Bypasses interrupts_enabled and ei_delay_active
+// Added for INTR parsing
+#define RST_OPCODE_MASK 0xC7
+#define RST_BASE_OPCODE 0xC7
+#define RST_ADDR_MASK   0x38
+
+static uint32_t service_interrupts(Vm_8085 *vm) {
+    // 1. TRAP (NMI) - Highest Priority
     if (vm->trap_asserted) {
         vm->trap_asserted = false; // Acknowledge
         vm->interrupts_enabled = false;
@@ -772,7 +791,7 @@ static uint32_t service_interrupts(Vm_8085 *vm) {// 1. TRAP (NMI) - Highest Prio
 
         stack_push(vm, vm->pc);
         vm->pc = VECTOR_TRAP;
-        return 12; // Typical T-states for hardware interrupt push
+        return 12; // M1=6, M2=3, M3=3
     }
 
     // Guard check for all maskable interrupts
@@ -811,20 +830,49 @@ static uint32_t service_interrupts(Vm_8085 *vm) {// 1. TRAP (NMI) - Highest Prio
         return 12;
     }
 
-    // 5. INTR - Lowest Priority (Your existing code)
+    // 5. INTR - Lowest Priority
     if (vm->intr_asserted) {
+        // Do not clear vm->intr_asserted here! INTR is level-triggered.
+        // The external device should drop the line once it receives INTA.
         vm->interrupts_enabled = false;
         vm->halt = false;
 
         uint8_t vector_op = vm->intr_vector_opcode;
 
-        // Handle standard RST n instructions
+        // Handle standard 1-byte RST n instructions (e.g., 0xFF = RST 7)
         if ((vector_op & RST_OPCODE_MASK) == RST_BASE_OPCODE) {
             stack_push(vm, vm->pc);
             vm->pc = (vector_op & RST_ADDR_MASK);
-            return T_STATES_INTR_ACK_RST;
+            return 12; // M1(INTA)=6, M2(MW)=3, M3(MW)=3
         }
-        // Handle CALL ...
+
+        // Handle 3-byte hardware CALL instruction (0xCD)
+        else if (vector_op == 0xCD) {
+            stack_push(vm, vm->pc);
+
+            // To fetch the next two bytes, the CPU issues two more INTA pulses.
+            // Since we bypass the normal memory fetch (PC is not incremented),
+            // you must provide a way for the peripheral to supply the address.
+
+            // OPTION A: Using a callback to the peripheral bus
+            // uint8_t addr_lo = vm->inta_read_cb(vm);
+            // uint8_t addr_hi = vm->inta_read_cb(vm);
+            // vm->pc = (addr_hi << 8) | addr_lo;
+
+            // OPTION B: Assuming the peripheral pre-loaded the full 16-bit address
+            // into the VM struct alongside the opcode (Fastest for WebAssembly)
+            vm->pc = vm->intr_call_address;
+
+            return 18; // M1(INTA)=6, M2(INTA)=3, M3(INTA)=3, M4(MW)=3, M5(MW)=3
+        }
+
+        // Failsafe: If a peripheral injects an invalid or unsupported opcode,
+        // clear the interrupt state to prevent a deadlock and resume normal execution.
+        else {
+            vm->intr_asserted = false;
+            vm->interrupts_enabled = true; // Re-enable to avoid lock-out
+            return 0;
+        }
     }
 
     return 0; // No interrupts firing
@@ -844,13 +892,20 @@ uint32_t vm_execute(Vm_8085 *vm, uint32_t t_states_goal) {
     return t_states_executed;
 }
 
+#ifdef TARGET_WEB
+#define memset __builtin_memset
+#define memcpy __builtin_memcpy
+#else
+#include <string.h>
+#endif
+
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 64
 
 #define WEBASM_EXPORT __attribute__((visibility("default")))
 
 #if 0
-static const uint8_t game_binary[] = {
+static const uint8_t program[] = {
     0x06, 0x00,             // 0x0000: MVI B, 0x00
     // FRAME LOOP
     0x21, 0x00, 0x80,       // 0x0002: LXI H, 0x8000
@@ -878,7 +933,7 @@ static const uint8_t game_binary[] = {
     0xC3, 0x02, 0x00        // 0x0020: JMP 0x0002
 };
 #else
-static uint8_t game_binary[] = {
+static uint8_t program[] = {
     0x21, 0x00, 0x80, 0x11, 0x34, 0x12, 0x01, 0x00, 0x3C, 0x7A, 0x83, 0x3C, 0x0F, 0x53, 0x5F, 0xE6,
     0x01, 0xC2, 0x19, 0x00, 0x3E, 0x00, 0xC3, 0x1B, 0x00, 0x3E, 0xFF, 0x77, 0x23, 0x0B, 0x78, 0xB1,
     0xC2, 0x09, 0x00, 0x21, 0xF1, 0x80, 0x3E, 0x01, 0x32, 0xFE, 0x7F, 0x3E, 0x01, 0x32, 0xFF, 0x7F,
@@ -897,7 +952,8 @@ static uint8_t game_binary[] = {
     0x78, 0xB1, 0xC2, 0xEB, 0x00, 0xC3, 0x23, 0x00
 };
 #endif
-static const uint32_t game_binary_len = sizeof(game_binary);
+
+static const uint32_t program_len = sizeof(program);
 
 
 // --- 3. Outer Machine State Structure ---
@@ -912,43 +968,35 @@ static Pc8201Machine machine;
 
 // --- 5. System-Specific Peripherals: Translate 8085 RAM into RGBA Canvas Pixels ---
 void update_canvas_buffer(Pc8201Machine* mach) {
-    uint16_t vram_start = 0x8000;
+    uint8_t *vram = &mach->cpu.memory[0x8000];
+    uint32_t *canvas = (uint32_t*)mach->canvas_buffer;
+    int total_pixels = SCREEN_WIDTH * SCREEN_HEIGHT;
 
-    // 240 * 64 = 15360 total bytes written by the plasma code
-    for (int y = 0; y < SCREEN_HEIGHT; y++) {
-        for (int x = 0; x < SCREEN_WIDTH; x++) {
-            int linear_pixel = y * SCREEN_WIDTH + x;
-
-            // Read sequentially through the full 15,360 bytes of VRAM
-            uint16_t target_mem = vram_start + linear_pixel;
-            uint8_t pixel_data = mach->cpu.memory[target_mem];
-
-            int canvas_idx = linear_pixel * 4;
-
-            // Ensure strict 4-byte RGBA alignment
-            mach->canvas_buffer[canvas_idx]     = pixel_data; // R
-            mach->canvas_buffer[canvas_idx + 1] = pixel_data; // G
-            mach->canvas_buffer[canvas_idx + 2] = pixel_data; // Blue
-            mach->canvas_buffer[canvas_idx + 3] = 255;        // Alpha
-        }
+    for (int i = 0; i < total_pixels; i++) {
+        uint8_t p = vram[i];
+        // Pack RGBA values directly into a single 32-bit write operation
+        canvas[i] = (255U << 24) | (p << 16) | (p << 8) | p;
     }
 }
 
-WEBASM_EXPORT void init_machine(uint16_t random_seed) {
+WEBASM_EXPORT void init_machine(uint32_t random_seed) {
     // Clear memory & registers
 
-    for (uint32_t i = 0; i < sizeof(machine); ++i) *(uint8_t*)(&machine) = 0;
-
-    game_binary[4] = (uint8_t)random_seed;
-    game_binary[5] = (uint8_t)(random_seed >> 8);
+    // for (uint32_t i = 0; i < sizeof(machine); ++i) *(uint8_t*)(&machine) = 0;
+    memset(&machine, 0, sizeof(machine));
 
     // Load the hardcoded binary directly into the CPU's memory array at address 0x0000
-    for (uint32_t i = 0; i < game_binary_len; i++) {
-        machine.cpu.memory[i] = game_binary[i];
-    }
+    memcpy(machine.cpu.memory, program, program_len);
+
+    machine.cpu.memory[4] = (uint8_t)random_seed;
+    machine.cpu.memory[5] = (uint8_t)(random_seed >> 8);
+
+    // for (uint32_t i = 0; i < program_len; i++) {
+    //     machine.cpu.memory[i] = program[i];
+    // }
 }
 
-WEBASM_EXPORT uint8_t* get_canvas_buffer() {
+WEBASM_EXPORT uint8_t* get_canvas_buffer(void) {
     return machine.canvas_buffer;
 }
 
