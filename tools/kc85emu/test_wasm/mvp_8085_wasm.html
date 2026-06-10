@@ -2,115 +2,314 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Wasm Canvas Shared Memory Example</title>
+    <!-- CRITICAL: Forces mobile browsers to render at actual device scale instead of zooming out -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEC PC-8201A LCD Shader</title>
     <style>
         *, *:before, *:after {
             box-sizing: border-box;
         }
         html { height: 100%; }
         body {
-            background: #7e8776;
+            background: hsl(63 4% 78% / 1);
             display: flex;
-            justify-content: center;
+            flex-direction: column;
+            justify-content: top;
             align-items: center;
             height: 100%;
             margin: 0;
-            padding: 1em;
+            padding: 8px;
+            gap: 24px;
         }
         canvas {
-            border: 4px solid #000;
-            image-rendering: pixelated;
-            aspect 240/64;
+            border: 16px solid hsl(129.4deg 8.75% 56.16%);
+/*            box-shadow:
+                0 20px 40px rgba(0,0,0,0.6),
+                inset 0 0 12px rgba(0,0,0,0.8);*/
+            aspect-ratio: 240 / 64;
             width: 100%;
+        }
+
+        /* --- Touch Controls Styles --- */
+        .touch-controls {
+            display: none; /* Hidden on desktop by default */
+
+            /* Ergonomic sizing: scales smoothly with screen width, but stays between 60px and 85px */
+            grid-template-columns: repeat(3, clamp(60px, 16vw, 85px));
+            grid-template-rows: repeat(3, clamp(60px, 16vw, 85px));
+
+            gap: 0px;
+            user-select: none;
+            -webkit-user-select: none;
+            opacity: 0.4;
+        }
+
+        /* Displays layout on smartphones, tablets, and touch-primary devices */
+        @media (pointer: coarse), (max-width: 1024px) {
+            .touch-controls {
+                display: grid;
+                position: fixed;   /* Lock it to the screen viewport */
+                bottom: 24px;      /* Comfortable thumb spacing from the bottom */
+                right: 24px;       /* Comfortable thumb spacing from the right edge */
+                z-index: 100;      /* Keep it floating on top of other content */
+            }
+        }
+
+        .touch-btn {
+            background: rgba(255, 255, 255, 0.4);
+            border: 2px solid rgba(255, 255, 255, 0.8);
+            border-radius: 99%;
+            color: #8c9685;
+            font-size: 2em;
+            font-weight: 900;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            touch-action: manipulation;
+            cursor: pointer;
+        }
+
+        .touch-btn:active {
+            background: #1a1b18;
+            border-color: #232521;
+            color: #555c51;
+            transform: translateY(1px);
+        }
+
+        .touch-btn.up { margin-bottom: -0.9em; }
+        .touch-btn.left { margin-right: -0.9em; }
+        .touch-btn.right { margin-left: -0.9em; }
+        .touch-btn.down { margin-top: -0.9em; }
+
+        .spacer {
+            visibility: hidden;
         }
     </style>
 </head>
 <body>
 
-    <canvas id="canvas" width="240" height="64"></canvas>
+    <canvas id="canvas"></canvas>
+
+    <!-- Virtual D-Pad Cluster Map -->
+    <div class="touch-controls">
+        <div class="spacer"></div>
+        <button class="touch-btn up" data-row="6" data-col="1">↑</button>
+        <div class="spacer"></div>
+
+        <button class="touch-btn left" data-row="6" data-col="3">←</button>
+        <div class="spacer"></div>
+        <button class="touch-btn right" data-row="6" data-col="4">→</button>
+
+        <div class="spacer"></div>
+        <button class="touch-btn down" data-row="6" data-col="2">↓</button>
+        <div class="spacer"></div>
+    </div>
 
     <script>
-        const ctx = canvas.getContext('2d');
+        const canvas = document.getElementById('canvas');
+        const gl = canvas.getContext('webgl2');
+
         const WIDTH = 240;
         const HEIGHT = 64;
 
-        let frame = 0;
+        if (!gl) {
+            alert("WebGL2 is required for this advanced LCD shader effect.");
+        }
+
+        // --- WebGL 2 Shaders ---
+
+        const vsSource = `#version 300 es
+            in vec2 a_position;
+            out vec2 v_texCoord;
+            void main() {
+                gl_Position = vec4(a_position, 0.0, 1.0);
+                v_texCoord = a_position * 0.5 + 0.5;
+                v_texCoord.y = 1.0 - v_texCoord.y;
+            }
+        `;
+
+        const fsSource = `#version 300 es
+            precision mediump float;
+            in vec2 v_texCoord;
+            out vec4 fragColor;
+
+            uniform sampler2D u_image;
+            uniform vec2 u_resolution;
+            uniform vec2 u_aaWidth;
+
+            // Colors matching the NEC PC-8201A
+            const vec3 COLOR_BG     = vec3(0.39, 0.42, 0.38);
+            const vec3 COLOR_PIXEL  = vec3(0.08, 0.09, 0.08);
+            const vec3 COLOR_SHADOW = vec3(0.33, 0.36, 0.32);
+
+            const float PIXEL_GAP = 0.15;
+            const vec2 SHADOW_OFFSET = vec2(0.25, 0.25);
+
+            // Image adjustment modifiers
+            const float CONTRAST = 1.00;   // 1.0 is neutral, >1.0 increases contrast, <1.0 decreases
+            const float BRIGHTNESS = 0.0; // 0.0 is neutral, positive values brighten, negative values darken
+
+            float getPixelMask(vec2 gridFract, vec2 aaWidth) {
+                vec2 bl = smoothstep(vec2(PIXEL_GAP) - aaWidth, vec2(PIXEL_GAP) + aaWidth, gridFract);
+                vec2 tr = smoothstep(vec2(PIXEL_GAP) - aaWidth, vec2(PIXEL_GAP) + aaWidth, 1.0 - gridFract);
+                return bl.x * bl.y * tr.x * tr.y;
+            }
+
+            // Simple pseudo-random hash for noise
+            float hash(vec2 p) {
+                return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453123);
+            }
+
+            void main() {
+                vec2 pixelCoord = v_texCoord * u_resolution;
+                vec2 gridId = floor(pixelCoord);
+                vec2 gridFract = fract(pixelCoord);
+
+                vec2 texUV = (gridId + 0.5) / u_resolution;
+                vec4 texColor = texture(u_image, texUV);
+                float pixelActive = step(texColor.r, 0.52);
+
+                vec2 shadowCoord = pixelCoord - SHADOW_OFFSET;
+                vec2 shadowGridId = floor(shadowCoord);
+                vec2 shadowUV = (shadowGridId + 0.5) / u_resolution;
+                vec4 shadowTexColor = texture(u_image, shadowUV);
+                float shadowActive = step(shadowTexColor.r, 0.52);
+
+                float pixelMask = getPixelMask(gridFract, u_aaWidth);
+                float shadowMask = getPixelMask(fract(shadowCoord), u_aaWidth);
+
+                // Apply a subtle, non-uniform gradient to simulate a diffuse reflection
+                float lightFactor = dot(v_texCoord, vec2(0.7, -0.7)) * 0.1 + 0.95;
+                vec3 baseColor = COLOR_BG * lightFactor;
+
+                // Add micro-noise using the physical output resolution via gl_FragCoord
+                // This gives a fine, high-res texture instead of chunky, low-res noise blocks
+                baseColor += (hash(gl_FragCoord.xy) * 0.08);
+
+                vec3 finalColor = baseColor;
+
+                // Mix shadow and then pixel on top of background
+                finalColor = mix(finalColor, COLOR_SHADOW, shadowMask * shadowActive);
+                finalColor = mix(finalColor, COLOR_PIXEL, pixelMask * pixelActive);
+
+                // Final color grading to give a slightly warmer, vintage tint
+                finalColor *= vec3(1.0, 0.99, 0.96);
+
+                // Apply contrast and brightness calculations together
+                finalColor = (finalColor - 0.5) * CONTRAST + 0.5 + BRIGHTNESS;
+
+                // Clamp the final output to ensure values don't blow out past standard limits
+                finalColor = clamp(finalColor, 0.0, 1.0);
+
+                fragColor = vec4(finalColor, 1.0);
+            }`;
+
+        // --- WebGL Program Compilation ---
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+            }
+            return shader;
+        }
+
+        const shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, createShader(gl, gl.VERTEX_SHADER, vsSource));
+        gl.attachShader(shaderProgram, createShader(gl, gl.FRAGMENT_SHADER, fsSource));
+        gl.linkProgram(shaderProgram);
+        gl.useProgram(shaderProgram);
+
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
+
+        const positionLocation = gl.getAttribLocation(shaderProgram, "a_position");
+        gl.enableVertexAttribArray(positionLocation);
+        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, WIDTH, HEIGHT, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+        const resolutionLocation = gl.getUniformLocation(shaderProgram, "u_resolution");
+        gl.uniform2f(resolutionLocation, WIDTH, HEIGHT);
+
+        const aaLocation = gl.getUniformLocation(shaderProgram, "u_aaWidth");
+
+        function resizeCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            const displayWidth  = Math.round(canvas.clientWidth * dpr);
+            const displayHeight = Math.round(canvas.clientHeight * dpr);
+
+            if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+                canvas.width  = displayWidth;
+                canvas.height = displayHeight;
+                gl.viewport(0, 0, canvas.width, canvas.height);
+
+                gl.uniform2f(aaLocation, WIDTH / canvas.width, HEIGHT / canvas.height);
+            }
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // --- Wasm Initialization & Game Loop ---
 
         async function initWasm() {
-            // 1. Fetch and compile the standalone wasm file
             const response = await fetch('mvp_8085_wasm.wasm');
             const bytes = await response.arrayBuffer();
             const { instance } = await WebAssembly.instantiate(bytes);
 
             const { init_machine, get_canvas_buffer, run_frame, memory, set_key_state } = instance.exports;
 
-            // Initialize the 8085 state and load the embedded binary
             const cryptoArray = new Uint16Array(1);
             window.crypto.getRandomValues(cryptoArray);
-            const randomSeed = cryptoArray[0];
-            init_machine(randomSeed);
+            init_machine(cryptoArray[0]);
 
             const bufferPointer = get_canvas_buffer();
             const bufferLength = WIDTH * HEIGHT * 4;
-            const imgData = ctx.createImageData(WIDTH, HEIGHT);
+
+            let pixelView = new Uint8Array(memory.buffer, bufferPointer, bufferLength);
 
             let timeLast = performance.now();
             let clockPeriodDebt = 0;
 
             // --- PC-8201A Keyboard Matrix Mapping ---
-            // Maps modern JS KeyboardEvent.code to [row, column]
             const keyMap = {
-                // PA0
                 'KeyZ': [0, 0], 'KeyX': [0, 1], 'KeyC': [0, 2], 'KeyV': [0, 3],
                 'KeyB': [0, 4], 'KeyN': [0, 5], 'KeyM': [0, 6], 'Comma': [0, 7],
-
-                // PA1
                 'KeyA': [1, 0], 'KeyS': [1, 1], 'KeyD': [1, 2], 'KeyF': [1, 3],
                 'KeyG': [1, 4], 'KeyH': [1, 5], 'KeyJ': [1, 6], 'KeyK': [1, 7],
-
-                // PA2
                 'KeyQ': [2, 0], 'KeyW': [2, 1], 'KeyE': [2, 2], 'KeyR': [2, 3],
                 'KeyT': [2, 4], 'KeyY': [2, 5], 'KeyU': [2, 6], 'KeyI': [2, 7],
-
-                // PA3
-                'KeyO': [3, 0], 'KeyP': [3, 1], 'Quote': [3, 2], // @ symbol on PC-8201
+                'KeyO': [3, 0], 'KeyP': [3, 1], 'Quote': [3, 2],
                 'BracketLeft': [3, 3], 'Backslash': [3, 4], 'BracketRight': [3, 5],
-                'Backquote': [3, 6], // ^ symbol
-                'Slash': [3, 7],     // ? symbol
-
-                // PA4
+                'Backquote': [3, 6], 'Slash': [3, 7],
                 'Digit1': [4, 0], 'Digit2': [4, 1], 'Digit3': [4, 2], 'Digit4': [4, 3],
                 'Digit5': [4, 4], 'Digit6': [4, 5], 'Digit7': [4, 6], 'Digit8': [4, 7],
-
-                // PA5
                 'Digit9': [5, 0], 'Digit0': [5, 1], 'Semicolon': [5, 2], 'Minus': [5, 3],
-                'Equal': [5, 4], 'Space': [5, 5], 'Insert': [5, 6], // PAST/INS
-                'Period': [5, 7], // Map PC-8201 period somewhere if needed, but it shares >.
-
-                // PA6
+                'Equal': [5, 4], 'Space': [5, 5], 'Insert': [5, 6], 'Period': [5, 7],
                 'Backspace': [6, 0], 'ArrowUp': [6, 1], 'ArrowDown': [6, 2], 'ArrowLeft': [6, 3],
                 'ArrowRight': [6, 4], 'Tab': [6, 5], 'Escape': [6, 6], 'Enter': [6, 7],
-
-                // PA7
                 'F1': [7, 0], 'F2': [7, 1], 'F3': [7, 2], 'F4': [7, 3], 'F5': [7, 4],
-                'Pause': [7, 7], // STOP key
-
-                // PB0 (Modifiers)
+                'Pause': [7, 7],
                 'ShiftLeft': [8, 0], 'ShiftRight': [8, 0],
                 'ControlLeft': [8, 1], 'ControlRight': [8, 1],
-                'AltLeft': [8, 2], 'AltRight': [8, 2], // Mapping Alt to the GRPH key
+                'AltLeft': [8, 2], 'AltRight': [8, 2],
                 'CapsLock': [8, 4]
             };
-
-            // --- Event Listeners ---
-            // We use e.preventDefault() on mapped keys so the browser doesn't scroll
-            // the window when pressing Spacebar or the Arrow keys during gameplay.
 
             window.addEventListener('keydown', (e) => {
                 const mappedKey = keyMap[e.code];
                 if (mappedKey) {
                     e.preventDefault();
-                    // mappedKey[0] = row, mappedKey[1] = col, 1 = true (pressed)
                     set_key_state(mappedKey[0], mappedKey[1], 1);
                 }
             });
@@ -119,28 +318,57 @@
                 const mappedKey = keyMap[e.code];
                 if (mappedKey) {
                     e.preventDefault();
-                    // mappedKey[0] = row, mappedKey[1] = col, 0 = false (released)
                     set_key_state(mappedKey[0], mappedKey[1], 0);
                 }
             });
 
+            // --- Touch & Click Event Handlers ---
+            const touchBtns = document.querySelectorAll('.touch-btn');
+            touchBtns.forEach(btn => {
+                const row = parseInt(btn.getAttribute('data-row'), 10);
+                const col = parseInt(btn.getAttribute('data-col'), 10);
+
+                const pressKey = (e) => {
+                    e.preventDefault(); // Prevents multi-triggering, zooming, and scrolling on mobile
+                    set_key_state(row, col, 1);
+                };
+
+                const releaseKey = (e) => {
+                    e.preventDefault();
+                    set_key_state(row, col, 0);
+                };
+
+                // Native Touch Events
+                btn.addEventListener('touchstart', pressKey, { passive: false });
+                btn.addEventListener('touchend', releaseKey, { passive: false });
+                btn.addEventListener('touchcancel', releaseKey, { passive: false });
+
+                // Optional Mouse Fallbacks (Useful for debugging in DevTools mobile view)
+                btn.addEventListener('mousedown', () => set_key_state(row, col, 1));
+                btn.addEventListener('mouseup', () => set_key_state(row, col, 0));
+                btn.addEventListener('mouseleave', () => set_key_state(row, col, 0));
+            });
+
             (function renderLoop(timeNow) {
-                // Run 500 emulated 8085 instructions per browser animation frame
-                let deltaTime = timeNow - timeLast;
+                let deltaTime = (timeNow - timeLast) / 1000.0;
                 if (deltaTime > 0.1) deltaTime = 0.1;
 
                 const systemClockFreq = 2457600;
                 const numClockPeriods = Math.max(0, systemClockFreq * deltaTime - clockPeriodDebt);
                 clockPeriodDebt = run_frame(numClockPeriods) - numClockPeriods;
 
-                // Read the updated canvas pixels right out of Wasm shared memory
+                if (pixelView.byteLength === 0) {
+                    pixelView = new Uint8Array(memory.buffer, bufferPointer, bufferLength);
+                }
 
-                const pixelView = new Uint8ClampedArray(memory.buffer, bufferPointer, bufferLength);
-                imgData.data.set(pixelView);
-                ctx.putImageData(imgData, 0, 0);
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, WIDTH, HEIGHT, gl.RGBA, gl.UNSIGNED_BYTE, pixelView);
 
+                gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+                timeLast = timeNow;
                 requestAnimationFrame(renderLoop);
-            })(timeLast);
+            })(performance.now());
         }
 
         initWasm();
