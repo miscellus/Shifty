@@ -6,15 +6,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NEC PC-8201A LCD Shader</title>
     <style>
+        :root {
+            --lcd-bg: rgb(168 172 164);
+            --lcd-pixel: rgb(41 42 40);
+            --lcd-shadow: rgb(129 130 124);
+        }
         *, *:before, *:after {
             box-sizing: border-box;
         }
         html { height: 100%; }
         body {
-            background: hsl(63 4% 78% / 1);
+            background: var(--lcd-pixel);
             display: flex;
             flex-direction: column;
-            justify-content: top;
+            justify-content: center;
             align-items: center;
             height: 100%;
             margin: 0;
@@ -22,10 +27,11 @@
             gap: 24px;
         }
         canvas {
-            border: 16px solid hsl(129.4deg 8.75% 56.16%);
-/*            box-shadow:
-                0 20px 40px rgba(0,0,0,0.6),
-                inset 0 0 12px rgba(0,0,0,0.8);*/
+            border-radius: 6px;
+            border: solid 8px var(--lcd-bg);
+            box-shadow:
+                0 8px 10px rgba(0,0,0,0.6),
+                inset 0 0 3px rgba(0,0,0,0.8);
             aspect-ratio: 240 / 64;
             width: 100%;
         }
@@ -53,6 +59,8 @@
                 right: 24px;       /* Comfortable thumb spacing from the right edge */
                 z-index: 100;      /* Keep it floating on top of other content */
             }
+
+            body { justify-content: flex-start; }
         }
 
         .touch-btn {
@@ -102,7 +110,7 @@
 
         <div class="spacer"></div>
         <button class="touch-btn down" data-row="6" data-col="2">↓</button>
-        <div class="spacer"></div>
+        <div id="colorDiv" class="spacer"></div>
     </div>
 
     <script>
@@ -138,12 +146,15 @@
             uniform vec2 u_aaWidth;
 
             // Colors matching the NEC PC-8201A
-            const vec3 COLOR_BG     = vec3(0.39, 0.42, 0.38);
-            const vec3 COLOR_PIXEL  = vec3(0.08, 0.09, 0.08);
-            const vec3 COLOR_SHADOW = vec3(0.33, 0.36, 0.32);
+            // const vec3 COLOR_BG     = vec3(0.39, 0.42, 0.38);
+            // const vec3 COLOR_PIXEL  = vec3(0.08, 0.09, 0.08);
+            // const vec3 COLOR_SHADOW = vec3(0.33, 0.36, 0.32);
+            uniform vec3 u_colorBg;
+            uniform vec3 u_colorPixel;
+            uniform vec3 u_colorShadow;
 
-            const float PIXEL_GAP = 0.15;
-            const vec2 SHADOW_OFFSET = vec2(0.25, 0.25);
+            const float PIXEL_GAP = 0.1;
+            const vec2 SHADOW_OFFSET = vec2(0.20, 0.25);
 
             // Image adjustment modifiers
             const float CONTRAST = 1.00;   // 1.0 is neutral, >1.0 increases contrast, <1.0 decreases
@@ -180,7 +191,7 @@
 
                 // Apply a subtle, non-uniform gradient to simulate a diffuse reflection
                 float lightFactor = dot(v_texCoord, vec2(0.7, -0.7)) * 0.1 + 0.95;
-                vec3 baseColor = COLOR_BG * lightFactor;
+                vec3 baseColor = u_colorBg * lightFactor;
 
                 // Add micro-noise using the physical output resolution via gl_FragCoord
                 // This gives a fine, high-res texture instead of chunky, low-res noise blocks
@@ -189,8 +200,8 @@
                 vec3 finalColor = baseColor;
 
                 // Mix shadow and then pixel on top of background
-                finalColor = mix(finalColor, COLOR_SHADOW, shadowMask * shadowActive);
-                finalColor = mix(finalColor, COLOR_PIXEL, pixelMask * pixelActive);
+                finalColor = mix(finalColor, u_colorShadow, shadowMask * shadowActive);
+                finalColor = mix(finalColor, u_colorPixel, pixelMask * pixelActive);
 
                 // Final color grading to give a slightly warmer, vintage tint
                 finalColor *= vec3(1.0, 0.99, 0.96);
@@ -260,10 +271,40 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
+
+        // 2. Helper function to read ANY valid CSS color and convert it to WebGL RGB
+        function getCSSColorAsVec3(cssVarName) {
+            // Create a temporary element to let the browser resolve the CSS color
+            colorDiv.style.color = `var(${cssVarName})`;
+            // getComputedStyle always resolves colors to "rgb(r, g, b)"
+            const rgbString = window.getComputedStyle(colorDiv).color;
+
+            // Extract the numbers and map them from 0-255 to 0.0-1.0
+            const match = rgbString.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+            if (match) {
+                return [
+                    parseInt(match[1]) / 255.0,
+                    parseInt(match[2]) / 255.0,
+                    parseInt(match[3]) / 255.0
+                ];
+            }
+            return [0, 0, 0]; // Safe fallback
+        }
+
+        const colorBgLoc = gl.getUniformLocation(shaderProgram, "u_colorBg");
+        const colorPixelLoc = gl.getUniformLocation(shaderProgram, "u_colorPixel");
+        const colorShadowLoc = gl.getUniformLocation(shaderProgram, "u_colorShadow");
+
+        function updateShaderColors() {
+            gl.uniform3fv(colorBgLoc, getCSSColorAsVec3('--lcd-bg'));
+            gl.uniform3fv(colorPixelLoc, getCSSColorAsVec3('--lcd-pixel'));
+            gl.uniform3fv(colorShadowLoc, getCSSColorAsVec3('--lcd-shadow'));
+        }
+
         // --- Wasm Initialization & Game Loop ---
 
         async function initWasm() {
-            const response = await fetch('mvp_8085_wasm.wasm');
+            const response = await fetch('web_shifty.wasm');
             const bytes = await response.arrayBuffer();
             const { instance } = await WebAssembly.instantiate(bytes);
 
@@ -277,9 +318,6 @@
             const bufferLength = WIDTH * HEIGHT * 4;
 
             let pixelView = new Uint8Array(memory.buffer, bufferPointer, bufferLength);
-
-            let timeLast = performance.now();
-            let clockPeriodDebt = 0;
 
             // --- PC-8201A Keyboard Matrix Mapping ---
             const keyMap = {
@@ -349,17 +387,22 @@
                 btn.addEventListener('mouseleave', () => set_key_state(row, col, 0));
             });
 
+            let timeLast = performance.now();
+            let tStatesTooMany = 0;
+
             (function renderLoop(timeNow) {
                 let deltaTime = (timeNow - timeLast) / 1000.0;
                 if (deltaTime > 0.1) deltaTime = 0.1;
 
                 const systemClockFreq = 2457600;
-                const numClockPeriods = Math.max(0, systemClockFreq * deltaTime - clockPeriodDebt);
-                clockPeriodDebt = run_frame(numClockPeriods) - numClockPeriods;
+                const tStateGoal = Math.max(0, systemClockFreq * deltaTime - tStatesTooMany);
+                tStatesTooMany = run_frame(tStateGoal);
 
                 if (pixelView.byteLength === 0) {
                     pixelView = new Uint8Array(memory.buffer, bufferPointer, bufferLength);
                 }
+
+                updateShaderColors();
 
                 gl.bindTexture(gl.TEXTURE_2D, texture);
                 gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, WIDTH, HEIGHT, gl.RGBA, gl.UNSIGNED_BYTE, pixelView);

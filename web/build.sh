@@ -6,5 +6,5 @@ clang --target=wasm32 \
       -nostdlib \
       -Wl,--no-entry \
       -Wl,--export-all \
-      -o mvp_8085_wasm.wasm mvp_8085_wasm.c
+      -o web_shifty.wasm web_shifty.c
 

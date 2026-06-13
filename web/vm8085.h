@@ -1,7 +1,92 @@
+#ifndef VM8085_H
+#define VM8085_H
+
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct {
+    bool cy, p, ac, z, s;
+} Flags;
+
+typedef struct Vm_8085 Vm_8085;
+
+typedef void (* Vm_8085_Memory_Cb)(Vm_8085 *vm, uint16_t address, bool write, uint8_t *in_out_data);
+typedef bool (* Vm_8085_Io_Cb)(Vm_8085* vm, uint8_t port, bool is_out, uint8_t *in_out_data);
+typedef void (* Vm_8085_Loop_Cb)(Vm_8085* vm);
+
+struct Vm_8085 {
+    Flags flags;
+
+    uint8_t a;
+    uint8_t b, c;
+    uint8_t d, e;
+    uint8_t h, l;
+
+    uint16_t sp;
+    uint16_t pc;
+
+    bool halt;
+    bool interrupts_enabled;
+    bool ei_delay_active;
+
+    // --- New Hardware Interrupt Pins & Masks ---
+    bool trap_asserted; // Highest priority (NMI)
+
+    bool rst75_latch;   // Priority 2 (Edge-triggered, requires a latch)
+    bool rst75_mask;
+
+    bool rst65_asserted; // Priority 3 (Level-triggered)
+    bool rst65_mask;
+
+    bool rst55_asserted; // Priority 4 (Level-triggered)
+    bool rst55_mask;
+
+    // --- Existing INTR state (Priority 5) ---
+    bool intr_asserted;
+    uint8_t intr_vector_opcode;
+    uint16_t intr_call_address;
+
+    Vm_8085_Memory_Cb mem_cb;
+    Vm_8085_Io_Cb io_cb;
+    Vm_8085_Loop_Cb loop_cb;
+    void* user_data;
+
+    uint64_t total_t_states;
+};
+
+uint32_t vm8085_step(Vm_8085 *vm);
+uint32_t vm8085_run(Vm_8085 *vm, uint32_t t_states_goal);
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // VM8085_H
+
+
+
+
+
+
+
+
+///////////////////////////////////////////////////////////////////////////
+#ifdef VM8085_IMPLEMENTATION
+///////////////////////////////////////////////////////////////////////////
+
+#include <stdint.h>
+#include <stdbool.h>
+
+#ifdef TARGET_WEB
 #define assert(...)
+#else
+#include <assert.h>
+#endif
 
 // The 4 main opcode groups (Bits 6-7)
 typedef uint8_t InstructionGroup;
@@ -122,12 +207,6 @@ enum {
     T_STATES_INTR_ACK_CALL = 18  // 3-byte CALL acknowledgment timing
 };
 
-typedef struct Vm_8085 Vm_8085;
-
-typedef bool (* Vm_8085_Memory_Cb)(Vm_8085 *vm, uint16_t address, bool write, uint8_t *in_out_data);
-typedef bool (* Vm_8085_Io_Cb)(Vm_8085* vm, uint8_t port, bool is_out, uint8_t *in_out_data);
-typedef bool (* Vm_8085_Loop_Cb)(Vm_8085* vm);
-
 enum {
     FLAG_CY = (1 << 0),
     FLAG_P  = (1 << 2),
@@ -135,10 +214,6 @@ enum {
     FLAG_Z  = (1 << 6),
     FLAG_S  = (1 << 7),
 };
-
-typedef struct {
-    bool cy, p, ac, z, s;
-} Flags;
 
 static inline uint8_t flags_pack(Flags flags) {
     uint8_t packed_flags = 0;
@@ -160,61 +235,18 @@ static inline Flags flags_unpack(uint8_t packed_flags) {
     return flags;
 }
 
-struct Vm_8085 {
-    Flags flags;
-
-    uint8_t a;
-    uint8_t b, c;
-    uint8_t d, e;
-    uint8_t h, l;
-
-    uint16_t sp;
-    uint16_t pc;
-
-    bool halt;
-    bool interrupts_enabled;
-    bool ei_delay_active;
-
-    // --- New Hardware Interrupt Pins & Masks ---
-    bool trap_asserted; // Highest priority (NMI)
-
-    bool rst75_latch;   // Priority 2 (Edge-triggered, requires a latch)
-    bool rst75_mask;
-
-    bool rst65_asserted; // Priority 3 (Level-triggered)
-    bool rst65_mask;
-
-    bool rst55_asserted; // Priority 4 (Level-triggered)
-    bool rst55_mask;
-
-    // --- Existing INTR state (Priority 5) ---
-    bool intr_asserted;
-    uint8_t intr_vector_opcode;
-    uint16_t intr_call_address;
-
-    Vm_8085_Memory_Cb mem_cb;
-    Vm_8085_Io_Cb io_cb;
-    Vm_8085_Loop_Cb loop_cb;
-    void* user_data;
-
-    uint64_t clock_period_count;
-
-    uint8_t memory[65536];
-};
-
 //
 // Memory & Hardware Abstractions
 //
 
 static inline uint8_t mem_read_byte(Vm_8085* vm, uint16_t address) {
-    uint8_t data = 0xFF;
-    if (vm->mem_cb && vm->mem_cb(vm, address, false, &data)) return data;
-    return vm->memory[address];
+    uint8_t data = 0xff;
+    vm->mem_cb(vm, address, false, &data);
+    return data;
 }
 
 static inline void mem_write_byte(Vm_8085* vm, uint16_t address, uint8_t data) {
-    if (vm->mem_cb && vm->mem_cb(vm, address, true, &data)) return;
-    vm->memory[address] = data;
+    vm->mem_cb(vm, address, true, &data);
 }
 
 static inline uint16_t mem_read_word(Vm_8085 *vm, uint16_t address) {
@@ -266,7 +298,7 @@ static inline void flags_update_szp(Vm_8085 *vm, uint8_t result) {
     vm->flags.p = (result & 1) != 0;
 }
 
-uint8_t reg8_read(Vm_8085 *vm, Reg8 reg_index) {
+static uint8_t reg8_read(Vm_8085 *vm, Reg8 reg_index) {
     switch (reg_index.v) {
         case 0: return vm->b;
         case 1: return vm->c;
@@ -281,7 +313,7 @@ uint8_t reg8_read(Vm_8085 *vm, Reg8 reg_index) {
     return 0;
 }
 
-void reg8_write(Vm_8085 *vm, Reg8 reg_index, uint8_t val) {
+static void reg8_write(Vm_8085 *vm, Reg8 reg_index, uint8_t val) {
     switch (reg_index.v) {
         case 0: vm->b = val; break;
         case 1: vm->c = val; break;
@@ -295,7 +327,7 @@ void reg8_write(Vm_8085 *vm, Reg8 reg_index, uint8_t val) {
     }
 }
 
-uint16_t reg16_read(Vm_8085 *vm, Reg16 rp_index, bool is_psw) {
+static uint16_t reg16_read(Vm_8085 *vm, Reg16 rp_index, bool is_psw) {
     switch (rp_index.v) {
         case 0: return (vm->b << 8) | vm->c;
         case 1: return (vm->d << 8) | vm->e;
@@ -306,7 +338,7 @@ uint16_t reg16_read(Vm_8085 *vm, Reg16 rp_index, bool is_psw) {
     return 0;
 }
 
-void reg16_write(Vm_8085 *vm, Reg16 rp_index, uint16_t val, bool is_psw) {
+static void reg16_write(Vm_8085 *vm, Reg16 rp_index, uint16_t val, bool is_psw) {
     uint8_t hi = (uint8_t)(val >> 8);
     uint8_t lo = (uint8_t)val;
     switch (rp_index.v) {
@@ -328,10 +360,9 @@ void reg16_write(Vm_8085 *vm, Reg16 rp_index, uint16_t val, bool is_psw) {
 }
 
 static inline uint8_t io_read(Vm_8085* vm, uint16_t address) {
-    const bool is_write = false;
     uint8_t data = 0xFF;
 
-    if (vm->io_cb && vm->io_cb(vm, (uint8_t)address, is_write, &data)) {
+    if (vm->io_cb && vm->io_cb(vm, (uint8_t)address, /*is_write*/ false, &data)) {
         return data;
     }
 
@@ -339,10 +370,8 @@ static inline uint8_t io_read(Vm_8085* vm, uint16_t address) {
 }
 
 static inline void io_write(Vm_8085* vm, uint16_t address, uint8_t data) {
-    const bool is_write = true;
-
     if (vm->io_cb) {
-        vm->io_cb(vm, (uint8_t)address, is_write, &data);
+        vm->io_cb(vm, (uint8_t)address, /*is_write*/ true, &data);
     }
 }
 
@@ -351,7 +380,7 @@ static inline void io_write(Vm_8085* vm, uint16_t address, uint8_t data) {
 // ALU Core
 //
 
-bool check_condition(Vm_8085 *vm, ConditionKind cond) {
+static bool check_condition(Vm_8085 *vm, ConditionKind cond) {
     switch (cond.v) {
         case COND_NZ: return !vm->flags.z;
         case COND_Z:  return  vm->flags.z;
@@ -386,7 +415,7 @@ static inline void alu_sub(Vm_8085 *vm, uint8_t operand, uint8_t borrow_in, bool
     flags_update_szp(vm, (uint8_t)internal_res);
 }
 
-void execute_alu_op(Vm_8085 *vm, AluOp op, uint8_t operand) {
+static void execute_alu_op(Vm_8085 *vm, AluOp op, uint8_t operand) {
     switch (op.v) {
         case ALU_ADD: alu_add(vm, operand, 0); break;
         case ALU_ADC: alu_add(vm, operand, vm->flags.cy ? 1 : 0); break;
@@ -414,7 +443,7 @@ void execute_alu_op(Vm_8085 *vm, AluOp op, uint8_t operand) {
     }
 }
 
-void execute_acc_op(Vm_8085 *vm, AccCyOp op_index) {
+static void execute_acc_op(Vm_8085 *vm, AccCyOp op_index) {
     uint8_t a = vm->a;
     switch (op_index.v) {
         case ACC_CY_RLC: {
@@ -535,7 +564,122 @@ static void op_rim(Vm_8085 *vm) {
 /* Main Core Cycle Hook                                                       */
 /* -------------------------------------------------------------------------- */
 
-uint32_t vm_execute_instruction(Vm_8085 *vm) {
+
+// Define the hardware vectors for clarity
+#define VECTOR_TRAP  0x0024 // RST 4.5
+#define VECTOR_RST75 0x003C
+#define VECTOR_RST65 0x0034
+#define VECTOR_RST55 0x002C
+
+// Added for INTR parsing
+#define RST_OPCODE_MASK 0xC7
+#define RST_BASE_OPCODE 0xC7
+#define RST_ADDR_MASK   0x38
+
+static uint32_t service_interrupts(Vm_8085 *vm) {
+    // 1. TRAP (NMI) - Highest Priority
+    if (vm->trap_asserted) {
+        vm->trap_asserted = false; // Acknowledge
+        vm->interrupts_enabled = false;
+        vm->halt = false;
+
+        stack_push(vm, vm->pc);
+        vm->pc = VECTOR_TRAP;
+        return 12; // M1=6, M2=3, M3=3
+    }
+
+    // Guard check for all maskable interrupts
+    if (!vm->interrupts_enabled || vm->ei_delay_active) {
+        return 0; // Proceed with normal execution
+    }
+
+    // 2. RST 7.5 - Edge triggered (latched)
+    if (vm->rst75_latch && !vm->rst75_mask) {
+        vm->rst75_latch = false; // Clear latch on service
+        vm->interrupts_enabled = false;
+        vm->halt = false;
+
+        stack_push(vm, vm->pc);
+        vm->pc = VECTOR_RST75;
+        return 12;
+    }
+
+    // 3. RST 6.5 - Level triggered
+    if (vm->rst65_asserted && !vm->rst65_mask) {
+        vm->interrupts_enabled = false;
+        vm->halt = false;
+
+        stack_push(vm, vm->pc);
+        vm->pc = VECTOR_RST65;
+        return 12;
+    }
+
+    // 4. RST 5.5 - Level triggered
+    if (vm->rst55_asserted && !vm->rst55_mask) {
+        vm->interrupts_enabled = false;
+        vm->halt = false;
+
+        stack_push(vm, vm->pc);
+        vm->pc = VECTOR_RST55;
+        return 12;
+    }
+
+    // 5. INTR - Lowest Priority
+    if (vm->intr_asserted) {
+        // Do not clear vm->intr_asserted here! INTR is level-triggered.
+        // The external device should drop the line once it receives INTA.
+        vm->interrupts_enabled = false;
+        vm->halt = false;
+
+        uint8_t vector_op = vm->intr_vector_opcode;
+
+        // Handle standard 1-byte RST n instructions (e.g., 0xFF = RST 7)
+        if ((vector_op & RST_OPCODE_MASK) == RST_BASE_OPCODE) {
+            stack_push(vm, vm->pc);
+            vm->pc = (vector_op & RST_ADDR_MASK);
+            return 12; // M1(INTA)=6, M2(MW)=3, M3(MW)=3
+        }
+
+        // Handle 3-byte hardware CALL instruction (0xCD)
+        else if (vector_op == 0xCD) {
+            stack_push(vm, vm->pc);
+
+            // To fetch the next two bytes, the CPU issues two more INTA pulses.
+            // Since we bypass the normal memory fetch (PC is not incremented),
+            // you must provide a way for the peripheral to supply the address.
+
+            // OPTION A: Using a callback to the peripheral bus
+            // uint8_t addr_lo = vm->inta_read_cb(vm);
+            // uint8_t addr_hi = vm->inta_read_cb(vm);
+            // vm->pc = (addr_hi << 8) | addr_lo;
+
+            // OPTION B: Assuming the peripheral pre-loaded the full 16-bit address
+            // into the VM struct alongside the opcode (Fastest for WebAssembly)
+            vm->pc = vm->intr_call_address;
+
+            return 18; // M1(INTA)=6, M2(INTA)=3, M3(INTA)=3, M4(MW)=3, M5(MW)=3
+        }
+
+        // Failsafe: If a peripheral injects an invalid or unsupported opcode,
+        // clear the interrupt state to prevent a deadlock and resume normal execution.
+        else {
+            vm->intr_asserted = false;
+            vm->interrupts_enabled = true; // Re-enable to avoid lock-out
+            return 0;
+        }
+    }
+
+    return 0; // No interrupts firing
+}
+
+uint32_t vm8085_step(Vm_8085 *vm) {
+    uint32_t t_states = service_interrupts(vm);
+
+    if (t_states) {
+        // We return early because an interrupt was handled instead of normal instruction flow.
+        return t_states;
+    }
+
     if (vm->halt) {
         return 4; // Return minimum execution state timing if halted
     }
@@ -544,7 +688,6 @@ uint32_t vm_execute_instruction(Vm_8085 *vm) {
     vm->ei_delay_active = false;
 
     uint8_t opcode = fetch_byte(vm);
-    uint32_t t_states = 0;
 
     // Unpack the raw opcode into our distinct, aliased byte slots
     struct {
@@ -771,400 +914,17 @@ uint32_t vm_execute_instruction(Vm_8085 *vm) {
     return t_states;
 }
 
-// Define the hardware vectors for clarity
-#define VECTOR_TRAP  0x0024 // RST 4.5
-#define VECTOR_RST75 0x003C
-#define VECTOR_RST65 0x0034
-#define VECTOR_RST55 0x002C
+uint32_t vm8085_run(Vm_8085 *vm, uint32_t t_state_goal) {
+    uint32_t t_state_sum = 0;
 
-// Added for INTR parsing
-#define RST_OPCODE_MASK 0xC7
-#define RST_BASE_OPCODE 0xC7
-#define RST_ADDR_MASK   0x38
-
-static uint32_t service_interrupts(Vm_8085 *vm) {
-    // 1. TRAP (NMI) - Highest Priority
-    if (vm->trap_asserted) {
-        vm->trap_asserted = false; // Acknowledge
-        vm->interrupts_enabled = false;
-        vm->halt = false;
-
-        stack_push(vm, vm->pc);
-        vm->pc = VECTOR_TRAP;
-        return 12; // M1=6, M2=3, M3=3
-    }
-
-    // Guard check for all maskable interrupts
-    if (!vm->interrupts_enabled || vm->ei_delay_active) {
-        return 0; // Proceed with normal execution
-    }
-
-    // 2. RST 7.5 - Edge triggered (latched)
-    if (vm->rst75_latch && !vm->rst75_mask) {
-        vm->rst75_latch = false; // Clear latch on service
-        vm->interrupts_enabled = false;
-        vm->halt = false;
-
-        stack_push(vm, vm->pc);
-        vm->pc = VECTOR_RST75;
-        return 12;
-    }
-
-    // 3. RST 6.5 - Level triggered
-    if (vm->rst65_asserted && !vm->rst65_mask) {
-        vm->interrupts_enabled = false;
-        vm->halt = false;
-
-        stack_push(vm, vm->pc);
-        vm->pc = VECTOR_RST65;
-        return 12;
-    }
-
-    // 4. RST 5.5 - Level triggered
-    if (vm->rst55_asserted && !vm->rst55_mask) {
-        vm->interrupts_enabled = false;
-        vm->halt = false;
-
-        stack_push(vm, vm->pc);
-        vm->pc = VECTOR_RST55;
-        return 12;
-    }
-
-    // 5. INTR - Lowest Priority
-    if (vm->intr_asserted) {
-        // Do not clear vm->intr_asserted here! INTR is level-triggered.
-        // The external device should drop the line once it receives INTA.
-        vm->interrupts_enabled = false;
-        vm->halt = false;
-
-        uint8_t vector_op = vm->intr_vector_opcode;
-
-        // Handle standard 1-byte RST n instructions (e.g., 0xFF = RST 7)
-        if ((vector_op & RST_OPCODE_MASK) == RST_BASE_OPCODE) {
-            stack_push(vm, vm->pc);
-            vm->pc = (vector_op & RST_ADDR_MASK);
-            return 12; // M1(INTA)=6, M2(MW)=3, M3(MW)=3
-        }
-
-        // Handle 3-byte hardware CALL instruction (0xCD)
-        else if (vector_op == 0xCD) {
-            stack_push(vm, vm->pc);
-
-            // To fetch the next two bytes, the CPU issues two more INTA pulses.
-            // Since we bypass the normal memory fetch (PC is not incremented),
-            // you must provide a way for the peripheral to supply the address.
-
-            // OPTION A: Using a callback to the peripheral bus
-            // uint8_t addr_lo = vm->inta_read_cb(vm);
-            // uint8_t addr_hi = vm->inta_read_cb(vm);
-            // vm->pc = (addr_hi << 8) | addr_lo;
-
-            // OPTION B: Assuming the peripheral pre-loaded the full 16-bit address
-            // into the VM struct alongside the opcode (Fastest for WebAssembly)
-            vm->pc = vm->intr_call_address;
-
-            return 18; // M1(INTA)=6, M2(INTA)=3, M3(INTA)=3, M4(MW)=3, M5(MW)=3
-        }
-
-        // Failsafe: If a peripheral injects an invalid or unsupported opcode,
-        // clear the interrupt state to prevent a deadlock and resume normal execution.
-        else {
-            vm->intr_asserted = false;
-            vm->interrupts_enabled = true; // Re-enable to avoid lock-out
-            return 0;
-        }
-    }
-
-    return 0; // No interrupts firing
-}
-
-uint32_t vm_execute(Vm_8085 *vm, uint32_t t_states_goal) {
-    uint32_t t_states_executed = 0;
-    uint32_t t_states = 0;
-
-    for (; t_states_executed < t_states_goal; t_states_executed += t_states) {
+    while (t_state_sum < t_state_goal) {
         if (vm->loop_cb) vm->loop_cb(vm);
-        t_states = service_interrupts(vm);
-        if (t_states != 0) continue; // Skip the standard fetch-execute cycle
-        t_states = vm_execute_instruction(vm);
+        uint32_t t_states = vm8085_step(vm);
+        t_state_sum += t_states;
+        vm->total_t_states += t_states;
     }
 
-    return t_states_executed;
+    return t_state_sum - t_state_goal;
 }
 
-#ifdef TARGET_WEB
-#define memset __builtin_memset
-#define memcpy __builtin_memcpy
-#else
-#include <string.h>
-#endif
-
-#define SCREEN_WIDTH 240
-#define SCREEN_HEIGHT 64
-
-#ifdef TARGET_WEB
-#define WEBASM_EXPORT __attribute__((visibility("default")))
-#else
-#define WEBASM_EXPORT
-#endif
-
-#include "executable_code.h"
-
-typedef struct {
-    uint8_t bytes[50][4];
-    uint8_t page; // 0-3
-    uint8_t offset; // 0-49
-    bool is_counter_mode_down;
-} Pc8201LcdDriver;
-
-typedef struct {
-    Pc8201LcdDriver drivers[10];
-    uint16_t driver_select; // bit 0 selects driver 0, 1 selects driver 1, ... , 10 selects driver 10.
-
-    // 32-bit RGBA buffer that JavaScript will read directly to draw to the HTML5 canvas
-} Pc8201Lcd;
-
-// --- 3. Outer Machine State Structure ---
-typedef struct {
-    Vm_8085 cpu;
-    Pc8201Lcd lcd;
-    uint32_t canvas[SCREEN_WIDTH * SCREEN_HEIGHT];
-
-    // Keyboard Matrix State
-    uint8_t key_matrix[9]; // Index 0-7 = PA0-PA7, Index 8 = PB0
-    uint8_t key_strobe_a;  // State of Port 0xB9 (PA0-PA7)
-    uint8_t key_strobe_b;  // State of Port 0xBA (PB0)
-} Pc8201Machine;
-
-// Globally instantiate our machine state
-static Pc8201Machine machine;
-
-// --- 5. System-Specific Peripherals: Translate 8085 RAM into RGBA Canvas Pixels ---
-void update_canvas_buffer(Pc8201Machine* mach) {
-    Pc8201Lcd lcd = mach->lcd;
-    uint32_t *canvas = mach->canvas;
-
-    for (int i = 0; i < 10; ++i)
-    {
-
-        uint32_t driver_y = (i / 5) * 32;
-        uint32_t driver_x = (i % 5) * 50;
-
-        Pc8201LcdDriver *driv = &lcd.drivers[i];
-        for (int row = 0; row < 4; ++row)
-        for (int col = 0; col < 50; ++col)
-        {
-            if (i % 5 == 4 && col >= 40) continue; // Clip the right-most driver
-
-            uint8_t pix8 = driv->bytes[col][row];
-
-            for (int pix_index = 0; pix_index < 8; ++pix_index)
-            {
-                uint32_t color = pix8 & (1 << pix_index)
-                    ? 0xFF000000
-                    : 0xFFFFFFFF;
-
-                uint32_t x = driver_x + col;
-                uint32_t y = driver_y + row*8 + pix_index;
-                uint32_t offset = x + y * SCREEN_WIDTH;
-                canvas[offset] = color;
-            }
-        }
-    }
-
-
-    // for (int i = 0; i < total_pixels; i++) {
-    //     uint8_t p = vram[i];
-    //     // Pack RGBA values directly into a single 32-bit write operation
-    //     canvas[i] = (255U << 24) | (p << 16) | (p << 8) | p;
-    // }
-}
-
-#ifdef TARGET_DEBUG
-#include <stdio.h>
-#else
-#define fprintf(...)
-#endif
-
-static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data)
-{
-    enum
-    {
-        PortLcdCmd = 0xfe,
-        PortLcdStat = PortLcdCmd,
-        PortLcdData = 0xff,
-        Port81C55Cmd = 0xB8,
-        Port81C55A = 0xB9,
-        Port81C55B = 0xBA,
-        PortKeyIn = 0xE8,
-    };
-
-    bool is_read = !is_write;
-    Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
-    Pc8201Lcd *lcd = &mach->lcd;
-
-    if (is_write && port == Port81C55A)
-    {
-        mach->key_strobe_a = *in_out_data; // Track keyboard strobe
-
-        lcd->driver_select &= 0xff00;
-        lcd->driver_select |= *in_out_data;
-        return true;
-    }
-
-    if (is_write && port == Port81C55B)
-    {
-        mach->key_strobe_b = *in_out_data; // Track keyboard strobe (PB0)
-
-        lcd->driver_select &= 0x00ff;
-        lcd->driver_select |= (*in_out_data & 0x3) << 8;
-        return true;
-    }
-
-    if (is_read && port == Port81C55B)
-    {
-        *in_out_data = (lcd->driver_select >> 8) & 0x3;
-        return true;
-    }
-
-    // Handle Keyboard Data Read (Port 0xE8)
-    if (is_read && port == PortKeyIn)
-    {
-        uint8_t result = 0xFF; // Default to all keys released
-
-        // Check Port A strobes (PA0 - PA7)
-        for (int i = 0; i < 8; i++) {
-            if (!(mach->key_strobe_a & (1 << i))) {
-                // Strobe is ACTIVE (0), merge in depressed keys (0) for this row
-                result &= mach->key_matrix[i];
-            }
-        }
-
-        // Check Port B strobe (PB0 is bit 0)
-        if (!(mach->key_strobe_b & 0x01)) {
-            // Strobe is ACTIVE (0), merge in depressed keys for PB0 row
-            result &= mach->key_matrix[8];
-        }
-
-        *in_out_data = result;
-        return true;
-    }
-
-    if (is_write && port == PortLcdCmd)
-    {
-        uint8_t cmd = *in_out_data;
-
-        for (int i = 0; i < 10; ++i) {
-            if (!(lcd->driver_select & (1 << i))) continue;
-
-            Pc8201LcdDriver *driv = &lcd->drivers[i];
-
-            // Handle the Up/Down selection command (0x3A / 0x3B)
-            if ((cmd & 0xFE) == 0x3A) {
-                driv->is_counter_mode_down = !(cmd & 0x01); // 1 = Up Counter, 0 = Down Counter
-            }
-            else {
-                driv->page = (cmd >> 6) & 0x3;
-                driv->offset = cmd & 0x3F;
-            }
-
-        }
-        return true;
-    }
-
-    if (is_write && port == PortLcdData)
-    {
-        for (int i = 0; i < 10; ++i) {
-            if (!(lcd->driver_select & (1 << i))) continue;
-
-            Pc8201LcdDriver* driv = &lcd->drivers[i];
-
-            // Enforce bounds checking before writing
-            if (driv->offset < 50 && driv->page < 4) {
-                driv->bytes[driv->offset][driv->page] = *in_out_data;
-            }
-
-            // Mimic "module 50" loop counter behavior
-            driv->offset += driv->is_counter_mode_down ? -1 : 1;
-            if (driv->offset >= 50) driv->offset = driv->is_counter_mode_down ? 49 : 0;
-        }
-        return true;
-    }
-
-    if (is_read && port == PortLcdStat)
-    {
-        *in_out_data = 0x00; // bit 7 is 0 to indicate LCD ready (For now the LCD is always ready)
-        return true;
-    }
-
-    if (is_write) fprintf(stderr, "IO WRITE port %#02X, value = %#02X;\n", port, *in_out_data);
-    else fprintf(stderr, "IO READ port %#02X;\n", port);
-
-    return false;
-}
-
-WEBASM_EXPORT void init_machine(uint32_t random_seed) {
-    // Clear memory & registers
-
-    // for (uint32_t i = 0; i < sizeof(machine); ++i) *(uint8_t*)(&machine) = 0;
-    memset(&machine, 0, sizeof(machine));
-
-    // Load the hardcoded binary directly into the CPU's memory array at address 0x0000
-    memcpy(machine.cpu.memory + program_origin, program, program_len);
-
-    machine.cpu.memory[0] = 0xC3; // JMP
-    machine.cpu.memory[1] = program_origin & 0xff;
-    machine.cpu.memory[2] = (program_origin >> 8) & 0xff;
-    machine.cpu.sp = 0x9DE4; // Taken directly from the debugger in VirtualT.
-
-    for (int i = 0; i < 9; i++) {
-        machine.key_matrix[i] = 0xFF;
-    }
-    machine.key_strobe_a = 0xFF;
-    machine.key_strobe_b = 0xFF;
-
-    machine.cpu.io_cb = io_cb;
-    machine.cpu.user_data = (void *)&machine;
-    // machine.cpu.memory[4] = (uint8_t)random_seed;
-    // machine.cpu.memory[5] = (uint8_t)(random_seed >> 8);
-
-    // for (uint32_t i = 0; i < program_len; i++) {
-    //     machine.cpu.memory[i] = program[i];
-    // }
-}
-
-WEBASM_EXPORT uint32_t* get_canvas_buffer(void) {
-    return machine.canvas;
-}
-
-WEBASM_EXPORT int32_t run_frame(int32_t t_state_count) {
-    // Run a batch of instructions for this browser frame
-    int32_t executed = vm_execute(&machine.cpu, t_state_count);
-    // Update the visual buffer based on current state of 8085 RAM
-    update_canvas_buffer(&machine);
-    return executed;
-}
-
-WEBASM_EXPORT void set_key_state(uint32_t row, uint32_t col, bool is_pressed) {
-    if (row > 8 || col > 7) return; // Guard against out-of-bounds
-
-    if (is_pressed) {
-        // 0 = Depressed
-        machine.key_matrix[row] &= ~(1 << col);
-    } else {
-        // 1 = Not depressed
-        machine.key_matrix[row] |= (1 << col);
-    }
-}
-
-#ifdef TARGET_DEBUG
-int main(void)
-{
-    init_machine(42);
-    while (true)
-    {
-        run_frame(40);
-    }
-    return 0;
-}
-#endif
+#endif // VM8085_IMPLEMENTATION
