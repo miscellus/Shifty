@@ -93,6 +93,15 @@
             color: #eee;
             border: 1px solid #555;
             border-radius: 4px;
+            font-weight: bold;
+        }
+
+        .debug-controls button::after {
+            display: inline;
+            content: attr(data-key);
+            color: #bbb;
+            font-weight: normal;
+            padding-left: 0.5em;
         }
 
         .debug-controls button:hover { background: #444; }
@@ -299,10 +308,10 @@
 
         <div class="left-pane">
             <div class="debug-controls">
-                <button id="btn-run-pause">Pause</button>
-                <button id="btn-step-into">Step Into</button>
-                <button id="btn-step-over">Step Over</button>
-                <button id="btn-step-out">Step Out</button>
+                <button id="btn-run-pause" data-key="F7">Pause</button>
+                <button id="btn-step-into" data-key="F11">Step Into</button>
+                <button id="btn-step-over" data-key="F10">Step Over</button>
+                <button id="btn-step-out" data-key="Shift+F11">Step Out</button>
             </div>
 
             <div class="source-viewer">

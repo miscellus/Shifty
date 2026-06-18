@@ -261,15 +261,44 @@
         // --- Input Handling ---
         setupInputListeners() {
             const handleKey = (e, isPressed) => {
+                if (isPressed) {
+                    if (e.code == 'F11') {
+                        if (this.isPaused) e.preventDefault();
+                        if (e.shiftKey) this.stepOut();
+                        else            this.stepInto();
+                        return;
+                    }
+
+                    if (e.code == 'F10') {
+                        e.preventDefault();
+                        this.stepOver();
+                        return;
+                    }
+
+                    if (e.code == 'F7') {
+                        e.preventDefault();
+                        this.setPaused(!this.isPaused);
+                        return;
+                    }
+
+                    if (e.code == 'F9') {
+                        e.preventDefault();
+                        this.toggleBreakpoint();
+                        return
+                    }
+                }
+
                 const mappedKey = KEY_MAP[e.code];
                 if (mappedKey && this.vm) {
-                    e.preventDefault();
+                    // e.preventDefault();
                     this.vm.set_key_state(mappedKey[0], mappedKey[1], isPressed ? 1 : 0);
                 }
             };
 
-            window.addEventListener('keydown', (e) => handleKey(e, true));
-            window.addEventListener('keyup', (e) => handleKey(e, false));
+            const passive = {passive: true};
+            const active = {passive: false};
+            window.addEventListener('keydown', (e) => handleKey(e, true), active);
+            window.addEventListener('keyup', (e) => handleKey(e, false), passive);
 
             document.querySelectorAll('.touch-btn').forEach(btn => {
                 const row = parseInt(btn.dataset.row, 10);
@@ -280,9 +309,9 @@
                     if (this.vm) this.vm.set_key_state(row, col, state);
                 };
 
-                btn.addEventListener('touchstart', (e) => applyState(e, 1), { passive: false });
-                btn.addEventListener('touchend', (e) => applyState(e, 0), { passive: false });
-                btn.addEventListener('touchcancel', (e) => applyState(e, 0), { passive: false });
+                btn.addEventListener('touchstart', (e) => applyState(e, 1), active);
+                btn.addEventListener('touchend', (e) => applyState(e, 0), active);
+                btn.addEventListener('touchcancel', (e) => applyState(e, 0), active);
                 btn.addEventListener('mousedown', (e) => applyState(e, 1));
                 btn.addEventListener('mouseup', (e) => applyState(e, 0));
                 btn.addEventListener('mouseleave', (e) => applyState(e, 0));
@@ -410,6 +439,7 @@
             this.tempBreakpoints.clear();
 
             if (paused) this.updateDebuggerState(this.getCpuState());
+            else this.currentActiveLineElement.classList.remove('active');
         }
 
         stepInto() {
