@@ -8,26 +8,28 @@
 extern "C" {
 #endif
 
-typedef struct {
-    bool cy, p, ac, z, s;
-} Flags;
-
 typedef struct Vm_8085 Vm_8085;
-
 typedef void (* Vm_8085_Memory_Cb)(Vm_8085 *vm, uint16_t address, bool write, uint8_t *in_out_data);
 typedef bool (* Vm_8085_Io_Cb)(Vm_8085* vm, uint8_t port, bool is_out, uint8_t *in_out_data);
 typedef void (* Vm_8085_Loop_Cb)(Vm_8085* vm);
 
-struct Vm_8085 {
-    Flags flags;
+typedef struct {
+    // All flags are boolean (0 or 1)
+    uint8_t cy;
+    uint8_t p;
+    uint8_t ac;
+    uint8_t z;
+    uint8_t s;
+} Flags;
 
+struct Vm_8085 {
+    uint16_t pc;
+    uint16_t sp;
     uint8_t a;
     uint8_t b, c;
     uint8_t d, e;
     uint8_t h, l;
-
-    uint16_t sp;
-    uint16_t pc;
+    Flags flags;
 
     bool halt;
     bool interrupts_enabled;
@@ -56,6 +58,12 @@ struct Vm_8085 {
     void* user_data;
 
     uint64_t total_t_states;
+
+    struct {
+        #define RET_ADDR_STACK_MAX 256
+        uint16_t ret_addr_stack[RET_ADDR_STACK_MAX];
+        uint32_t ret_addr_stack_index;
+    } debug;
 };
 
 uint32_t vm8085_step(Vm_8085 *vm);
@@ -280,6 +288,24 @@ static inline void stack_push(Vm_8085 *vm, uint16_t val) {
 static inline uint16_t stack_pop(Vm_8085 *vm) {
     uint16_t val = mem_read_word(vm, vm->sp);
     vm->sp += 2;
+    return val;
+}
+
+static inline void stack_push_ret_addr(Vm_8085 *vm, uint16_t val)
+{
+    stack_push(vm, val);
+    if (vm->debug.ret_addr_stack_index < RET_ADDR_STACK_MAX) {
+        vm->debug.ret_addr_stack[vm->debug.ret_addr_stack_index++] = val;
+    }
+}
+
+static inline uint16_t stack_pop_ret_addr(Vm_8085 *vm)
+{
+    uint16_t val = stack_pop(vm);
+    if (vm->debug.ret_addr_stack_index > 0) {
+        uint16_t val2 = vm->debug.ret_addr_stack[--vm->debug.ret_addr_stack_index];
+        assert(val == val2);
+    }
     return val;
 }
 
@@ -803,7 +829,7 @@ uint32_t vm8085_step(Vm_8085 *vm) {
             switch (op.z) {
                 case G3_RET_COND:
                     if (check_condition(vm, op.cond)) {
-                        vm->pc = stack_pop(vm);
+                        vm->pc = stack_pop_ret_addr(vm);
                         t_states = 12;
                     } else {
                         t_states = 6;
@@ -815,7 +841,7 @@ uint32_t vm8085_step(Vm_8085 *vm) {
                         t_states = 10;
                     } else {
                         switch (op.y) {
-                            case 1: vm->pc = stack_pop(vm); t_states = 10; break; // RET
+                            case 1: vm->pc = stack_pop_ret_addr(vm); t_states = 10; break; // RET
                             case 5: vm->pc = reg16_read(vm, RP_HL, false); t_states = 6; break; // PCHL
                             case 7: reg16_write(vm, RP_SP_PSW, reg16_read(vm, RP_HL, false), false); t_states = 6; break; // SPHL
                         }
@@ -878,7 +904,7 @@ uint32_t vm8085_step(Vm_8085 *vm) {
                     {
                         uint16_t c_addr = fetch_word(vm);
                         if (check_condition(vm, op.cond)) {
-                            stack_push(vm, vm->pc);
+                            stack_push_ret_addr(vm, vm->pc);
                             vm->pc = c_addr;
                             t_states = 18;
                         } else {
@@ -892,7 +918,7 @@ uint32_t vm8085_step(Vm_8085 *vm) {
                         t_states = 12;
                     } else if (op.y == 1) { // CALL
                         uint16_t call_addr = fetch_word(vm);
-                        stack_push(vm, vm->pc);
+                        stack_push_ret_addr(vm, vm->pc);
                         vm->pc = call_addr;
                         t_states = 18;
                     }

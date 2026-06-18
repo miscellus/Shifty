@@ -15,7 +15,7 @@ send2emu: build/shifty.co
 
 $(SHIFTY): build src/shifty.8085.asm src/tiles.8085.asm src/levels.8085.asm Makefile
 	$(ASM) -c -o $(SHIFTY) src/shifty.8085.asm
-	$(ASM) -o $(SHIFTY).bin src/shifty.8085.asm
+	$(ASM) -o $(SHIFTY).bin -l $(SHIFTY).lst src/shifty.8085.asm
 	python tools/bin2bas.py $(SHIFTY).bin -o $(SHIFTY).bas
 
 src/tiles.8085.asm: $(wildcard assets/tile_images/*.png) tools/png2asm.py Makefile

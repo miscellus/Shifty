@@ -33,6 +33,15 @@ typedef struct {
     // 32-bit RGBA buffer that JavaScript will read directly to draw to the HTML5 canvas
 } Pc8201Lcd;
 
+typedef uint8_t BreakPointKind;
+enum
+{
+    BP_NONE = 0,
+    BP_TEMP = 1,
+    BP_PERM = 2,
+};
+
+
 // --- 3. Outer Machine State Structure ---
 typedef struct {
     Vm_8085 cpu;
@@ -45,6 +54,8 @@ typedef struct {
     uint8_t key_matrix[9]; // Index 0-7 = PA0-PA7, Index 8 = PB0
     uint8_t key_strobe_a;  // State of Port 0xB9 (PA0-PA7)
     uint8_t key_strobe_b;  // State of Port 0xBA (PB0)
+
+    BreakPointKind breakpoints[65536];
 } Pc8201Machine;
 
 // Globally instantiate our machine state
@@ -82,13 +93,6 @@ void update_canvas_buffer(Pc8201Machine* mach) {
             }
         }
     }
-
-
-    // for (int i = 0; i < total_pixels; i++) {
-    //     uint8_t p = vram[i];
-    //     // Pack RGBA values directly into a single 32-bit write operation
-    //     canvas[i] = (255U << 24) | (p << 16) | (p << 8) | p;
-    // }
 }
 
 static void mem_cb(Vm_8085 *vm, uint16_t addr, bool is_write, uint8_t *in_out_data)
@@ -249,24 +253,91 @@ DECL_EXPORT void init_machine(uint32_t random_seed) {
     machine.cpu.io_cb = io_cb;
     machine.cpu.mem_cb = mem_cb;
     machine.cpu.user_data = (void *)&machine;
-    // machine.memory[4] = (uint8_t)random_seed;
-    // machine.memory[5] = (uint8_t)(random_seed >> 8);
-
-    // for (uint32_t i = 0; i < program_len; i++) {
-    //     machine.memory[i] = program[i];
-    // }
 }
 
 DECL_EXPORT uint32_t* get_canvas_buffer(void) {
     return machine.canvas;
 }
 
-DECL_EXPORT int32_t run_frame(int32_t t_state_goal) {
-    // Run a batch of instructions for this browser frame
-    int32_t t_states_over_goal = vm8085_run(&machine.cpu, t_state_goal);
-    // Update the visual buffer based on current state of 8085 RAM
+DECL_EXPORT void set_breakpoint(uint32_t addr, int32_t is_temporary) {
+    if (addr >= 65536) return;
+
+    uint8_t *bp = &machine.breakpoints[(uint16_t)addr];
+
+    if (*bp != BP_PERM) {
+        *bp = is_temporary ? BP_TEMP : BP_PERM;
+    }
+}
+
+DECL_EXPORT void clear_breakpoint(uint32_t addr) {
+    if (addr >= 65536) return;
+
+    machine.breakpoints[(uint16_t)addr] = BP_NONE;
+}
+
+DECL_EXPORT int32_t set_break_on_return(void) {
+    if (machine.cpu.debug.ret_addr_stack_index == 0) {
+        return -1;
+    }
+
+    uint16_t ret_addr = machine.cpu.debug.ret_addr_stack[machine.cpu.debug.ret_addr_stack_index - 1];
+    set_breakpoint(ret_addr, true);
+    return ret_addr;
+}
+
+static bool check_breakpoint(uint16_t addr) {
+
+    BreakPointKind bp = machine.breakpoints[addr];
+
+    if (bp == BP_NONE) {
+        return false;
+    }
+
+    if (bp == BP_TEMP) {
+        machine.breakpoints[addr] = BP_NONE;
+    }
+
+    assert(bp == BP_PERM);
+    return true;
+}
+
+DECL_EXPORT void step_cpu(void) {
+    vm8085_run(&machine.cpu, 1);
     update_canvas_buffer(&machine);
-    return t_states_over_goal;
+}
+
+DECL_EXPORT void step_over_cpu(void) {
+    uint16_t call_depth_before = machine.cpu.debug.ret_addr_stack_index;
+    uint16_t call_depth_after;
+    do
+    {
+        vm8085_run(&machine.cpu, 1);
+        call_depth_after = machine.cpu.debug.ret_addr_stack_index;
+    } while (call_depth_after > call_depth_before);
+
+    update_canvas_buffer(&machine);
+}
+
+DECL_EXPORT int32_t run_frame(int32_t t_state_goal) {
+    int32_t t_states_executed = 0;
+
+    while (t_states_executed < t_state_goal) {
+        // Stop execution immediately if we hit a breakpoint
+        if (check_breakpoint(machine.cpu.pc)) {
+            update_canvas_buffer(&machine);
+            return -1; // Special return value indicating execution paused
+        }
+        t_states_executed += vm8085_run(&machine.cpu, 1) + 1;
+    }
+
+    update_canvas_buffer(&machine);
+    return t_states_executed - t_state_goal;
+
+    // // Run a batch of instructions for this browser frame
+    // int32_t t_states_over_goal = vm8085_run(&machine.cpu, t_state_goal);
+    // // Update the visual buffer based on current state of 8085 RAM
+    // update_canvas_buffer(&machine);
+    // return t_states_over_goal;
 }
 
 DECL_EXPORT void set_key_state(uint32_t row, uint32_t col, bool is_pressed) {
@@ -279,6 +350,10 @@ DECL_EXPORT void set_key_state(uint32_t row, uint32_t col, bool is_pressed) {
         // 1 = Not depressed
         machine.key_matrix[row] |= (1 << col);
     }
+}
+
+DECL_EXPORT Vm_8085 *get_cpu_state_ptr(void) {
+    return &machine.cpu;
 }
 
 #ifdef TARGET_DEBUG
