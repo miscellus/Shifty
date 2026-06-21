@@ -21,7 +21,7 @@ build/web: build web/web_shifty.wasm web/web_shifty.js web/web_shifty.html $(SHI
 $(SHIFTY): build src/shifty.8085.asm src/tiles.8085.asm src/levels.8085.asm Makefile $(ASM)
 	$(ASM) -c -o $(SHIFTY) -d web/debug.json src/shifty.8085.asm
 	python tools/co2bas.py $(SHIFTY) -o $(SHIFTY).bas
-	xxd -i -n co_file $(SHIFTY) > web/co_file.inc
+	python tools/bin2cints.py $(SHIFTY) -o web/co_file.inc
 
 src/tiles.8085.asm: $(wildcard assets/tile_images/*.png) tools/png2asm.py Makefile
 	python tools/png2asm.py assets/tile_images src/tiles.8085.asm

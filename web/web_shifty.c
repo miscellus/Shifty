@@ -17,7 +17,9 @@
 #define DECL_EXPORT
 #endif
 
+static uint8_t co_file[] = {
 #include "co_file.inc"
+};
 
 typedef struct {
     uint8_t bytes[50][4];
