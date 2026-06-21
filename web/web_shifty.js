@@ -173,6 +173,8 @@
                 this.bufferPointer = this.vm.get_canvas_buffer();
                 this.bindWasmMemory();
 
+                this.setupEditableFlags();
+
                 requestAnimationFrame(this.renderLoop.bind(this));
             } catch (error) {
                 console.error("Failed to initialize Wasm or Emulator:", error);
@@ -259,6 +261,36 @@
         }
 
         // --- Input Handling ---
+        setupEditableFlags() {
+            // Map each UI element to its corresponding byte offset in the Wasm memory
+            const flagMap = [
+                { el: this.ui.cpu.cy, offset: 11 },
+                { el: this.ui.cpu.p,  offset: 12 },
+                { el: this.ui.cpu.ac, offset: 13 },
+                { el: this.ui.cpu.z,  offset: 14 },
+                { el: this.ui.cpu.s,  offset: 15 }
+            ];
+
+            flagMap.forEach(({ el, offset }) => {
+                if (!el) return;
+
+                // Make it obvious that the flag is clickable
+                el.style.cursor = 'pointer';
+
+                el.addEventListener('click', () => {
+                    if (!this.cpuView) return; // Ensure memory is bound
+
+                    // Read current value, toggle it, and write it back
+                    const currentVal = this.cpuView.getUint8(offset);
+                    const newVal = currentVal === 0 ? 1 : 0;
+                    this.cpuView.setUint8(offset, newVal);
+
+                    // Force an immediate UI update
+                    this.updateCpuUI(this.getCpuState());
+                });
+            });
+        }
+
         setupInputListeners() {
             const handleKey = (e, isPressed) => {
                 if (isPressed) {

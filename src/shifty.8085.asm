@@ -65,7 +65,7 @@ IsPosOutOfBounds:
 ; [E] = Y pos
 ; -> [CF] 1 if out of bounds
 ; Clobbers [A]
-	mOv a, e ; check y
+	mov a, e ; check y
 	adi -8
 	rc
 	mov a, d ; check x
@@ -76,7 +76,7 @@ PlayerMove:
 	; [C] = Direction (0 -> right, 1 -> up, 2 -> right, 3 -> down)
 	; This procedure pushes the pushable positions to the stack
 	; -> [A] = the number of positions pushed to the stack
-  lhld PlayerPos
+	lhld PlayerPos
 	xchg ; [D] = x, [E] = y
 
 	push d ; push our initial position
@@ -87,8 +87,8 @@ PlayerMove:
 	call TryGetNeigborPos
 	jc .cancelMove ; return with carry out of bounds and the move should be cancelled
 
-  call TileAddressFromPos
-  mov a, m
+	call TileAddressFromPos
+	mov a, m
 
 	; Check for solid
 	rlc ; [CF] = 1 means solid [CF] = 0 means not solid
@@ -124,7 +124,7 @@ PlayerMove:
 	xchg ; [DE] = closest tile pos, [HL] = furthest tile pos
 
 	; Get address of closest pos
-  call TileAddressFromPos ; [HL] = closest tile address
+	call TileAddressFromPos ; [HL] = closest tile address
 	inx h
 	mov a, m
 	ani TileIndexMask
@@ -223,12 +223,12 @@ PlayerMove:
 
 	; [DE] = original player position before the move
 	; Clear foreground tile on the starting position, the player just moved away from this tile.
-  call TileAddressFromPos ; [HL] = addr of closest
-  inx h
-  mov a, m
-  ani ~TileIndexMask
-  ori NeedsRedrawMask
-  mov m, a
+	call TileAddressFromPos ; [HL] = addr of closest
+	inx h
+	mov a, m
+	ani ~TileIndexMask
+	ori NeedsRedrawMask
+	mov m, a
 
 	ora a ; clear carry bit to indicate that the move was performed successfully
 	ret
@@ -305,7 +305,7 @@ LoadLevel:
 	ret
 
 GameInit:
-	lxi h, Level1
+	lxi h, Level0
 	call LoadLevel
 
 	lda Level.PlayerStartX
@@ -391,7 +391,7 @@ Draw:
 	  ; [D] = X
 	  ; [E] = Y
 	  ; [HL] = TileOffset = Tiles + TileIndex
-	    ; lxi h, TileWallBrick
+	  ; lxi h, TileWallBrick
 	  call DrawTile
 	pop h ; restore level offset
 
@@ -658,11 +658,11 @@ SetInterruptMask_09:
 ;=======================================
 ; Tile images
 Tiles:
-  include "tiles.8085.asm"
+	include "tiles.8085.asm"
 
 ;=======================================
 ; Levels
-  include "levels.8085.asm"
+	include "levels.8085.asm"
 
 ;=======================================
 ; Game data
@@ -672,10 +672,6 @@ PlayerTileY: ds 1
 PlayerTileX: ds 1
 
 PlayerMoveDir: ds 1
-
-; PlayerDeltaPos:
-; PlayerDeltaY: ds 1
-; PlayerDeltaX: ds 1
 
 KeyboardRow6Down: ds 1
 KeyboardRow6Pressed: ds 1

@@ -1,22 +1,27 @@
 
 SHIFTY := build/shifty.co
 
+WEB_SHIFTY_WASM := build/web/web_shifty.wasm
+
 ASMDIR := tools/asm8085
 ASMNAME := asm8085.exe
 ASM := $(ASMDIR)/$(ASMNAME)
 
 .PHONY: all clean
 
-all: run
+all: build/web
 
-.PHONY: send2emu
-send2emu: build/shifty.co
-	python tools/send2emu.py $(SHIFTY) --host localhost --port 9001
+build:
+	mkdir -p build
 
-$(SHIFTY): build src/shifty.8085.asm src/tiles.8085.asm src/levels.8085.asm Makefile
-	$(ASM) -c -o $(SHIFTY) src/shifty.8085.asm
-	$(ASM) -o $(SHIFTY).bin -l $(SHIFTY).lst src/shifty.8085.asm
-	python tools/bin2bas.py $(SHIFTY).bin -o $(SHIFTY).bas
+build/web: build web/web_shifty.wasm web/web_shifty.js web/web_shifty.html $(SHIFTY)
+	mkdir -p build/web
+	cp web/web_shifty.wasm web/web_shifty.js web/web_shifty.html web/debug.json web/co_file.inc build/web
+
+$(SHIFTY): build src/shifty.8085.asm src/tiles.8085.asm src/levels.8085.asm Makefile $(ASM)
+	$(ASM) -c -o $(SHIFTY) -d web/debug.json src/shifty.8085.asm
+	python tools/co2bas.py $(SHIFTY) -o $(SHIFTY).bas
+	xxd -i -n co_file $(SHIFTY) > web/co_file.inc
 
 src/tiles.8085.asm: $(wildcard assets/tile_images/*.png) tools/png2asm.py Makefile
 	python tools/png2asm.py assets/tile_images src/tiles.8085.asm
@@ -24,11 +29,8 @@ src/tiles.8085.asm: $(wildcard assets/tile_images/*.png) tools/png2asm.py Makefi
 src/levels.8085.asm: assets/levels.txt src/tiles.8085.asm tools/levels2asm.py Makefile
 	python tools/levels2asm.py assets/levels.txt src/tiles.8085.asm src/levels.8085.asm
 
-build:
-	mkdir -p build
-
 $(ASM):
-	$(MAKE) -C $(ASMDIR) ASM=$(ASMNAME)
+	$(MAKE) -C $(ASMDIR) ASM=$(ASMNAME) asm8085
 
 clean:
 	$(MAKE) -C $(ASMDIR) clean

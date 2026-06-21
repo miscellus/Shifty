@@ -29,7 +29,7 @@ def chunked(iterable, n):
 def fmt_data_line(line_no, bytes_list):
     return f"{line_no} data " + ",".join(str(b) for b in bytes_list)
 
-def generate_program(data_bytes, start_addr=0xa000, bytes_per_line=16, start_line=10, line_step=10):
+def generate_program(data_bytes, co_origin, co_length, co_entry, bytes_per_line=16, start_line=10, line_step=10):
     parts = []
     line_no = start_line
 
@@ -39,13 +39,15 @@ def generate_program(data_bytes, start_addr=0xa000, bytes_per_line=16, start_lin
         line_no += line_step
 
     byte_count = len(data_bytes)
-    end_addr = start_addr + byte_count - 1
+    end_addr = co_origin + byte_count - 1
+
+    # We use byte_count instead of co_length here
 
     # CLEAR: first arg is number of bytes of data
-    parts.append(f"{line_no} clear {byte_count}, {start_addr}"); line_no += line_step
-    parts.append(f"{line_no} for i={start_addr}to{end_addr}:read c:poke i,c:next"); line_no += line_step
-    #parts.append(f"{line_no} exec {start_addr}"); line_no += line_step
-    parts.append(f"{line_no} bsave \"out.co\",{start_addr},{byte_count},{start_addr}"); line_no += line_step
+    parts.append(f"{line_no} clear 0, {co_origin}"); line_no += line_step
+    parts.append(f"{line_no} for i={co_origin}to{end_addr}:read c:poke i,c:next"); line_no += line_step
+    #parts.append(f"{line_no} exec {co_origin}"); line_no += line_step
+    parts.append(f"{line_no} bsave \"out.co\",{co_origin},{byte_count},{co_entry}"); line_no += line_step
     #parts.append(f"{line_no} run\"com:9n81xn\"")
 
     # Join with CR only
@@ -56,7 +58,6 @@ def main():
     parser = argparse.ArgumentParser(description="Convert binary file to N82 BASIC (CR line endings).")
     parser.add_argument("infile", help="Input binary file")
     parser.add_argument("-o", "--output", help="Output file (default stdout)", default=None)
-    parser.add_argument("--start", type=int, default=0xa000, help="Start address to POKE (default 0xa000)")
     parser.add_argument("--bytes-per-line", type=int, default=16, help="Bytes per DATA line")
     parser.add_argument("--start-line", type=int, default=10, help="Starting BASIC line number")
     parser.add_argument("--line-step", type=int, default=10, help="Line number increment")
@@ -69,11 +70,16 @@ def main():
         sys.exit(2)
 
     data = infile.read_bytes()
-    data_bytes = list(data)
+    data_bytes = list(data[6:])
+    co_origin = int.from_bytes(data[0:2], 'little')
+    co_length = int.from_bytes(data[2:4], 'little')
+    co_entry  = int.from_bytes(data[4:6], 'little')
 
     prog_bytes = generate_program(
         data_bytes,
-        start_addr=args.start,
+        co_origin,
+        co_length,
+        co_entry,
         bytes_per_line=args.bytes_per_line,
         start_line=args.start_line,
         line_step=args.line_step

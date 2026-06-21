@@ -3,4 +3,6 @@ build/
 *.obj
 *.pdb
 *.ilk
-.vs/
+.vs/*
+*.sublime-workspace
+local/

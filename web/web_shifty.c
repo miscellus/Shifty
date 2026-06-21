@@ -17,7 +17,7 @@
 #define DECL_EXPORT
 #endif
 
-#include "executable_code.h"
+#include "co_file.inc"
 
 typedef struct {
     uint8_t bytes[50][4];
@@ -230,18 +230,25 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     return false;
 }
 
-DECL_EXPORT void init_machine(uint32_t random_seed) {
+DECL_EXPORT void init_machine(void) {
     // Clear memory & registers
 
     // for (uint32_t i = 0; i < sizeof(machine); ++i) *(uint8_t*)(&machine) = 0;
     memset(&machine, 0, sizeof(machine));
 
+    uint16_t program_base_addr = co_file[0] | ((uint16_t)co_file[1] << 8);
+    uint16_t program_length = co_file[2] | ((uint16_t)co_file[3] << 8);
+    uint16_t program_entry_addr  = co_file[4] | ((uint16_t)co_file[5] << 8);
+    uint8_t *program = co_file + 6;
     // Load the hardcoded binary directly into the CPU's memory array at address 0x0000
-    memcpy(machine.memory + program_origin, program, program_len);
+    memcpy(machine.memory + program_base_addr, program, program_length);
 
-    machine.memory[0] = 0xC3; // JMP
-    machine.memory[1] = program_origin & 0xff;
-    machine.memory[2] = (program_origin >> 8) & 0xff;
+    machine.memory[0] = 0xCD; // CALL
+    machine.memory[1] = program_entry_addr & 0xff;
+    machine.memory[2] = (program_entry_addr >> 8) & 0xff;
+    machine.memory[3] = 0xC3; // JMP
+    machine.memory[4] = 0x0;
+    machine.memory[5] = 0x0;
     machine.cpu.sp = 0x9DE4; // Taken directly from the debugger in VirtualT.
 
     for (int i = 0; i < 9; i++) {
