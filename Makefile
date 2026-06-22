@@ -23,6 +23,15 @@ $(SHIFTY): build src/shifty.8085.asm src/tiles.8085.asm src/levels.8085.asm Make
 	python tools/co2bas.py $(SHIFTY) -o $(SHIFTY).bas
 	python tools/bin2cints.py $(SHIFTY) -o web/co_file.inc
 
+web/web_shifty.wasm: web/web_shifty.c $(SHIFTY)
+	clang --target=wasm32 \
+      -O3 \
+      -DTARGET_WEB \
+      -nostdlib \
+      -Wl,--no-entry \
+      -Wl,--export-all \
+      -o web/web_shifty.wasm web/web_shifty.c
+
 src/tiles.8085.asm: $(wildcard assets/tile_images/*.png) tools/png2asm.py Makefile
 	python tools/png2asm.py assets/tile_images src/tiles.8085.asm
 

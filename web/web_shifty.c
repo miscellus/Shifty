@@ -43,6 +43,13 @@ enum
     BP_PERM = 2,
 };
 
+typedef union {
+    struct {
+        uint16_t line_number;
+        uint16_t file_index;
+    } s;
+    uint32_t v;
+} DebuggerLoc;
 
 // --- 3. Outer Machine State Structure ---
 typedef struct {
@@ -57,7 +64,9 @@ typedef struct {
     uint8_t key_strobe_a;  // State of Port 0xB9 (PA0-PA7)
     uint8_t key_strobe_b;  // State of Port 0xBA (PB0)
 
+    // Debugger support
     BreakPointKind breakpoints[65536];
+    DebuggerLoc address_to_line[65536];
 } Pc8201Machine;
 
 // Globally instantiate our machine state
@@ -310,24 +319,17 @@ static bool check_breakpoint(uint16_t addr) {
     return true;
 }
 
-DECL_EXPORT void step_cpu(void) {
-    vm8085_run(&machine.cpu, 1);
-    update_canvas_buffer(&machine);
-}
-
-DECL_EXPORT void step_over_cpu(void) {
-    uint16_t call_depth_before = machine.cpu.debug.ret_addr_stack_index;
-    uint16_t call_depth_after;
-    do
-    {
-        vm8085_run(&machine.cpu, 1);
-        call_depth_after = machine.cpu.debug.ret_addr_stack_index;
-    } while (call_depth_after > call_depth_before);
+DECL_EXPORT void step(int32_t step_over) {
+    uint16_t start_depth = machine.cpu.debug.ret_addr_stack_index;
+    do vm8085_run(&machine.cpu, 1);
+    while (!check_breakpoint(machine.cpu.pc)
+        && step_over
+        && (start_depth < machine.cpu.debug.ret_addr_stack_index));
 
     update_canvas_buffer(&machine);
 }
 
-DECL_EXPORT int32_t run_frame(int32_t t_state_goal) {
+DECL_EXPORT int32_t run(int32_t t_state_goal) {
     int32_t t_states_executed = 0;
 
     while (t_states_executed < t_state_goal) {
@@ -363,6 +365,10 @@ DECL_EXPORT void set_key_state(uint32_t row, uint32_t col, bool is_pressed) {
 
 DECL_EXPORT Vm_8085 *get_cpu_state_ptr(void) {
     return &machine.cpu;
+}
+
+DECL_EXPORT DebuggerLoc *get_source_map_ptr(void) {
+    return machine.address_to_line;
 }
 
 #ifdef TARGET_DEBUG

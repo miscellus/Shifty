@@ -103,8 +103,6 @@
             }`
     };
 
-    const CALL_OPCODES = [0xCD, 0xC4, 0xCC, 0xD4, 0xDC, 0xE4, 0xEC, 0xF4, 0xFC];
-
     // --- 2. Main Emulator Class ---
     class ShiftyEmulator {
         constructor() {
@@ -118,7 +116,6 @@
 
             this.cpuView = null;
             this.pixelView = null;
-            this.bufferPointer = 0;
             this.bufferLength = CONFIG.WIDTH * CONFIG.HEIGHT * 4;
 
             this.timeLast = performance.now();
@@ -161,18 +158,12 @@
                 const bytes = await response.arrayBuffer();
                 const { instance } = await WebAssembly.instantiate(bytes);
                 this.vm = instance.exports;
+                this.bindWasmMemory();
 
                 await this.loadDebugInfo();
                 this.setupDebugger();
                 this.setupInputListeners();
-
-                const cryptoArray = new Uint16Array(1);
-                window.crypto.getRandomValues(cryptoArray);
-                this.vm.init_machine(cryptoArray[0]);
-
-                this.bufferPointer = this.vm.get_canvas_buffer();
-                this.bindWasmMemory();
-
+                this.vm.init_machine();
                 this.setupEditableFlags();
 
                 requestAnimationFrame(this.renderLoop.bind(this));
@@ -182,8 +173,9 @@
         }
 
         bindWasmMemory() {
-            this.pixelView = new Uint8Array(this.vm.memory.buffer, this.bufferPointer, this.bufferLength);
+            this.pixelView = new Uint8Array(this.vm.memory.buffer, this.vm.get_canvas_buffer(), this.bufferLength);
             this.cpuView = new DataView(this.vm.memory.buffer, this.vm.get_cpu_state_ptr(), 16);
+            this.sourceMap32 = new Uint32Array(this.vm.memory.buffer, this.vm.get_source_map_ptr(), 65536);
         }
 
         // --- WebGL Setup ---
@@ -356,11 +348,12 @@
                 const response = await fetch('debug.json');
                 this.debugInfo = await response.json();
 
-                this.debugInfo.lines.forEach(lineData => {
-                    lineData.addresses.forEach(addr => {
+                for (const lineData of this.debugInfo.lines) {
+                    for (const addr of lineData.addresses) {
                         this.sourceMap[addr] = { fileId: lineData.file_id, line: lineData.line };
-                    });
-                });
+                        this.sourceMap32[addr] = (lineData.line & 0xffff) | ((lineData.file_id & 0xffff) << 16);
+                    }
+                }
 
                 if (this.ui.debug.fileSelector) {
                     this.debugInfo.files.forEach((file, index) => {
@@ -381,8 +374,6 @@
         renderSourceFile(fileId) {
             if (!this.ui.debug.sourceCode) return;
             this.ui.debug.sourceCode.innerHTML = '';
-
-            console.log("fileId: " + fileId);
 
             const lines = this.debugInfo.file_contents[fileId].split('\n');
             lines.forEach((text, index) => {
@@ -478,13 +469,12 @@
             if (!this.isPaused) return;
             const startMapping = this.sourceMap[this.getCpuProgramCounter()];
 
-            let currMapping;
             let safeguards = 0;
 
             // Step until we reach a DIFFERENT mapped line, or hit safeguard limit
             do {
-                this.vm.step_cpu();
-                currMapping = this.sourceMap[this.getCpuProgramCounter()];
+                this.vm.step(0);
+                const currMapping = this.sourceMap[this.getCpuProgramCounter()];
                 safeguards++;
 
                 // If we land on a mapped line, check if it's a new line
@@ -506,13 +496,13 @@
             if (!this.isPaused) return;
             const startMapping = this.sourceMap[this.getCpuProgramCounter()];
 
-            let currMapping;
             let safeguards = 0;
 
             // Step until we reach a DIFFERENT mapped line, or hit safeguard limit
             do {
-                this.vm.step_over_cpu();
-                currMapping = this.sourceMap[this.getCpuProgramCounter()];
+                this.vm.step(1);
+
+                const currMapping = this.sourceMap[this.getCpuProgramCounter()];
                 safeguards++;
 
                 // If we land on a mapped line, check if it's a new line
@@ -528,7 +518,6 @@
             } while (safeguards < 10000); // Increased safeguard to allow stepping over larger unmapped blocks
 
             this.updateDebuggerState(this.getCpuState());
-
         }
 
         stepOut() {
@@ -550,7 +539,7 @@
             this.ui.debug.btnRunPause?.addEventListener('click', () => {
                 if (this.isPaused) {
                     const cpu = this.getCpuState();
-                    if (this.activeBreakpoints.has(cpu.pc)) this.vm.step_cpu();
+                    if (this.activeBreakpoints.has(cpu.pc)) this.vm.step(0);
                     this.setPaused(false);
                 } else {
                     this.setPaused(true);
@@ -649,7 +638,7 @@
                 let deltaTime = Math.min((timeNow - this.timeLast) / 1000.0, 0.1);
                 const tStateGoal = Math.max(0, CONFIG.CLOCK_FREQ * deltaTime - this.tStatesTooMany);
 
-                const result = this.vm.run_frame(tStateGoal);
+                const result = this.vm.run(tStateGoal);
 
                 if (result === -1) {
                     // Breakpoint hit

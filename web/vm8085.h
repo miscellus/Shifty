@@ -66,7 +66,6 @@ struct Vm_8085 {
     } debug;
 };
 
-uint32_t vm8085_step(Vm_8085 *vm);
 uint32_t vm8085_run(Vm_8085 *vm, uint32_t t_states_goal);
 
 
@@ -698,7 +697,7 @@ static uint32_t service_interrupts(Vm_8085 *vm) {
     return 0; // No interrupts firing
 }
 
-uint32_t vm8085_step(Vm_8085 *vm) {
+static uint32_t vm8085_step(Vm_8085 *vm) {
     uint32_t t_states = service_interrupts(vm);
 
     if (t_states) {
