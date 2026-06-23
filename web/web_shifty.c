@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #define VM8085_IMPLEMENTATION
 #include "vm8085.h"
 
@@ -16,10 +18,6 @@
 #else
 #define DECL_EXPORT
 #endif
-
-static uint8_t co_file[] = {
-#include "co_file.inc"
-};
 
 typedef struct {
     uint8_t bytes[50][4];
@@ -241,7 +239,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     return false;
 }
 
-DECL_EXPORT void init_machine(void) {
+DECL_EXPORT void reset_emulator_with_co_file(uint8_t *co_file, int32_t co_file_len) {
     // Clear memory & registers
 
     // for (uint32_t i = 0; i < sizeof(machine); ++i) *(uint8_t*)(&machine) = 0;
@@ -271,6 +269,48 @@ DECL_EXPORT void init_machine(void) {
     machine.cpu.io_cb = io_cb;
     machine.cpu.mem_cb = mem_cb;
     machine.cpu.user_data = (void *)&machine;
+}
+
+// The WebAssembly linker automatically provides the __heap_base symbol.
+// It marks the end of statically allocated memory (like global variables)
+// and represents the safe starting point for our dynamic heap.
+extern unsigned char __heap_base;
+const size_t WASM_PAGE_SIZE = 1 << 16;
+
+DECL_EXPORT void* allocate(size_t size) {
+    static uintptr_t bump_ptr = (uintptr_t)&__heap_base;
+
+    if (size == 0) return NULL;
+
+    size_t aligned_size = (size + 7) & ~7;
+    uintptr_t next_bump_ptr = bump_ptr + aligned_size;
+
+    // __builtin_wasm_memory_size(0) returns the current memory size in pages.
+    // We multiply by WASM_PAGE_SIZE to get the exact byte boundary.
+    // The '0' refers to the memory index (Wasm currently uses index 0).
+    size_t current_mem_bytes = __builtin_wasm_memory_size(0) * WASM_PAGE_SIZE;
+
+    // Check if our allocation exceeds the current memory boundary
+    if (next_bump_ptr > current_mem_bytes) {
+        // Calculate how many extra bytes we need
+        size_t needed_bytes = next_bump_ptr - current_mem_bytes;
+
+        // Convert needed bytes to pages, rounding up to the nearest whole page
+        size_t pages_to_grow = (needed_bytes + WASM_PAGE_SIZE - 1) / WASM_PAGE_SIZE;
+
+        // __builtin_wasm_memory_grow(0, pages) asks the host for more memory.
+        // It returns the previous memory size in pages on success, or -1 on failure.
+        if (__builtin_wasm_memory_grow(0, pages_to_grow) == (size_t)-1) {
+            // The host refused to give us more memory (Out of Memory)
+            return NULL;
+        }
+    }
+
+    // Memory is guaranteed to be large enough now. Proceed with allocation.
+    void* allocated_memory = (void*)bump_ptr;
+    bump_ptr = next_bump_ptr;
+
+    return allocated_memory;
 }
 
 DECL_EXPORT uint32_t* get_canvas_buffer(void) {
@@ -374,7 +414,7 @@ DECL_EXPORT DebuggerLoc *get_source_map_ptr(void) {
 #ifdef TARGET_DEBUG
 int main(void)
 {
-    init_machine(42);
+    reset_emulator_with_co_file(42);
     while (true)
     {
         run_frame(40);

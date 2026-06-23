@@ -147,6 +147,10 @@
             };
         }
 
+        async fetchBytes(path) {
+            return await (await fetch(path)).arrayBuffer();
+        }
+
         // --- Core Initialization ---
         async init() {
             if (!this.setupWebGL()) return;
@@ -154,16 +158,19 @@
             this.setupWindowListeners();
 
             try {
-                const response = await fetch('web_shifty.wasm');
-                const bytes = await response.arrayBuffer();
-                const { instance } = await WebAssembly.instantiate(bytes);
+                const { instance } = await WebAssembly.instantiateStreaming(await fetch('web_shifty.wasm'));
                 this.vm = instance.exports;
+
+                const gameBytes = new Uint8Array(await this.fetchBytes('shifty.co'));
+                const gameBufferPtr = this.vm.allocate(gameBytes.byteLength);
+                const gameBuffer = new Uint8Array(this.vm.memory.buffer, gameBufferPtr, gameBytes.byteLength);
+                gameBuffer.set(gameBytes);
                 this.bindWasmMemory();
 
                 await this.loadDebugInfo();
                 this.setupDebugger();
                 this.setupInputListeners();
-                this.vm.init_machine();
+                this.vm.reset_emulator_with_co_file(gameBufferPtr, gameBytes.byteLength);
                 this.setupEditableFlags();
 
                 requestAnimationFrame(this.renderLoop.bind(this));
@@ -522,11 +529,6 @@
 
         stepOut() {
             if (!this.isPaused) return;
-            // const cpu = this.getCpuState();
-
-            // const memoryPtr = this.vm.get_memory_ptr ? this.vm.get_memory_ptr() : 0;
-            // const memory = new Uint8Array(this.vm.memory.buffer, memoryPtr, 65536);
-            // const retAddr = memory[cpu.sp] | (memory[cpu.sp + 1] << 8);
 
             const retAddr = this.vm.set_break_on_return();
             if (retAddr >= 0 && retAddr <= 65535) {

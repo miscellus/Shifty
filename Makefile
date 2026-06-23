@@ -9,21 +9,25 @@ ASM := $(ASMDIR)/$(ASMNAME)
 
 .PHONY: all clean
 
-all: build/web
+all: build/web $(SHIFTY)
 
 build:
 	mkdir -p build
 
-build/web: build web/web_shifty.wasm web/web_shifty.js web/web_shifty.html $(SHIFTY)
+build/web: build web/web_shifty.wasm web/web_shifty.js web/web_shifty.html
 	mkdir -p build/web
-	cp web/web_shifty.wasm web/web_shifty.js web/web_shifty.html web/debug.json web/co_file.inc build/web
+	cp  web/web_shifty.wasm \
+		web/web_shifty.js \
+		web/web_shifty.html \
+		web/debug.json \
+		build/web
 
-$(SHIFTY): build src/shifty.8085.asm src/tiles.8085.asm src/levels.8085.asm Makefile $(ASM)
+$(SHIFTY): build/web src/shifty.8085.asm src/tiles.8085.asm src/levels.8085.asm Makefile $(ASM)
 	$(ASM) -c -o $(SHIFTY) -d web/debug.json src/shifty.8085.asm
+	cp $(SHIFTY) build/web
 	python tools/co2bas.py $(SHIFTY) -o $(SHIFTY).bas
-	python tools/bin2cints.py $(SHIFTY) -o web/co_file.inc
 
-web/web_shifty.wasm: web/web_shifty.c $(SHIFTY)
+web/web_shifty.wasm: web/web_shifty.c
 	clang --target=wasm32 \
       -O3 \
       -DTARGET_WEB \
