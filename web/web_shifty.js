@@ -110,7 +110,6 @@
             this.debugInfo = null;
             this.sourceMap = new Array(65536).fill(null);
             this.activeBreakpoints = new Set();
-            this.tempBreakpoints = new Set();
             this.isPaused = false;
             this.currentActiveLineElement = null;
 
@@ -454,22 +453,20 @@
         }
 
         setPaused(paused) {
+            if (!this.vm) return;
+
             this.isPaused = paused;
             if (this.ui.debug.btnRunPause) {
                 this.ui.debug.btnRunPause.innerText = paused ? "Run" : "Pause";
             }
 
-            if (!this.vm) return;
-
-            this.tempBreakpoints.forEach(addr => {
-                if (!this.activeBreakpoints.has(addr)) {
-                    this.vm.set_breakpoint(addr, true);
-                }
-            });
-            this.tempBreakpoints.clear();
-
-            if (paused) this.updateDebuggerState(this.getCpuState());
-            else this.currentActiveLineElement.classList.remove('active');
+            if (paused) {
+                this.vm.clear_temporary_breakpoints();
+                this.updateDebuggerState(this.getCpuState());
+            }
+            else {
+                this.currentActiveLineElement.classList.remove('active');
+            }
         }
 
         stepInto() {
@@ -480,7 +477,7 @@
 
             // Step until we reach a DIFFERENT mapped line, or hit safeguard limit
             do {
-                this.vm.step(0);
+                this.vm.step_into();
                 const currMapping = this.sourceMap[this.getCpuProgramCounter()];
                 safeguards++;
 
@@ -507,7 +504,7 @@
 
             // Step until we reach a DIFFERENT mapped line, or hit safeguard limit
             do {
-                this.vm.step(1);
+                this.vm.step_over();
 
                 const currMapping = this.sourceMap[this.getCpuProgramCounter()];
                 safeguards++;
@@ -529,11 +526,7 @@
 
         stepOut() {
             if (!this.isPaused) return;
-
-            const retAddr = this.vm.set_break_on_return();
-            if (retAddr >= 0 && retAddr <= 65535) {
-                this.tempBreakpoints.add(retAddr);
-            }
+            this.vm.set_step_out_breakpoint();
             this.setPaused(false);
         }
 

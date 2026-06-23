@@ -59,11 +59,9 @@ struct Vm_8085 {
 
     uint64_t total_t_states;
 
-    struct {
-        #define RET_ADDR_STACK_MAX 256
-        uint16_t ret_addr_stack[RET_ADDR_STACK_MAX];
-        uint32_t ret_addr_stack_index;
-    } debug;
+    #define CALL_STACK_MAX_DEPTH 256
+    uint16_t call_stack[CALL_STACK_MAX_DEPTH];
+    uint32_t call_depth;
 };
 
 uint32_t vm8085_run(Vm_8085 *vm, uint32_t t_states_goal);
@@ -293,16 +291,16 @@ static inline uint16_t stack_pop(Vm_8085 *vm) {
 static inline void stack_push_ret_addr(Vm_8085 *vm, uint16_t val)
 {
     stack_push(vm, val);
-    if (vm->debug.ret_addr_stack_index < RET_ADDR_STACK_MAX) {
-        vm->debug.ret_addr_stack[vm->debug.ret_addr_stack_index++] = val;
+    if (vm->call_depth < CALL_STACK_MAX_DEPTH) {
+        vm->call_stack[vm->call_depth++] = val;
     }
 }
 
 static inline uint16_t stack_pop_ret_addr(Vm_8085 *vm)
 {
     uint16_t val = stack_pop(vm);
-    if (vm->debug.ret_addr_stack_index > 0) {
-        uint16_t val2 = vm->debug.ret_addr_stack[--vm->debug.ret_addr_stack_index];
+    if (vm->call_depth > 0) {
+        uint16_t val2 = vm->call_stack[--vm->call_depth];
         assert(val == val2);
     }
     return val;

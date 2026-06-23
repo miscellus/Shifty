@@ -333,17 +333,26 @@ DECL_EXPORT void clear_breakpoint(uint32_t addr) {
     machine.breakpoints[(uint16_t)addr] = BP_NONE;
 }
 
-DECL_EXPORT int32_t set_break_on_return(void) {
-    if (machine.cpu.debug.ret_addr_stack_index == 0) {
+DECL_EXPORT void clear_temporary_breakpoints(void) {
+    for (uint32_t i = 0; i < sizeof(machine.breakpoints) / sizeof(machine.breakpoints[0]); ++i)
+    {
+        if (machine.breakpoints[i] == BP_TEMP) {
+            machine.breakpoints[i] = BP_NONE;
+        }
+    }
+}
+
+DECL_EXPORT int32_t set_step_out_breakpoint(void) {
+    if (machine.cpu.call_depth == 0) {
         return -1;
     }
 
-    uint16_t ret_addr = machine.cpu.debug.ret_addr_stack[machine.cpu.debug.ret_addr_stack_index - 1];
+    uint16_t ret_addr = machine.cpu.call_stack[machine.cpu.call_depth - 1];
     set_breakpoint(ret_addr, true);
     return ret_addr;
 }
 
-static bool check_breakpoint(uint16_t addr) {
+static bool breakpoint_hit(uint16_t addr) {
 
     BreakPointKind bp = machine.breakpoints[addr];
 
@@ -353,20 +362,25 @@ static bool check_breakpoint(uint16_t addr) {
 
     if (bp == BP_TEMP) {
         machine.breakpoints[addr] = BP_NONE;
+        return true;
     }
 
     assert(bp == BP_PERM);
     return true;
 }
 
-DECL_EXPORT void step(int32_t step_over) {
-    uint16_t start_depth = machine.cpu.debug.ret_addr_stack_index;
-    do vm8085_run(&machine.cpu, 1);
-    while (!check_breakpoint(machine.cpu.pc)
-        && step_over
-        && (start_depth < machine.cpu.debug.ret_addr_stack_index));
+DECL_EXPORT uint16_t step_into(void) {
+    vm8085_run(&machine.cpu, 1);
+    update_canvas_buffer(&machine);
+    return machine.cpu.pc;
+}
+
+DECL_EXPORT uint16_t step_over(void) {
+    uint16_t start_depth = machine.cpu.call_depth;
+    do vm8085_run(&machine.cpu, 1); while (!breakpoint_hit(machine.cpu.pc) && (start_depth < machine.cpu.call_depth));
 
     update_canvas_buffer(&machine);
+    return machine.cpu.pc;
 }
 
 DECL_EXPORT int32_t run(int32_t t_state_goal) {
@@ -374,7 +388,7 @@ DECL_EXPORT int32_t run(int32_t t_state_goal) {
 
     while (t_states_executed < t_state_goal) {
         // Stop execution immediately if we hit a breakpoint
-        if (check_breakpoint(machine.cpu.pc)) {
+        if (breakpoint_hit(machine.cpu.pc)) {
             update_canvas_buffer(&machine);
             return -1; // Special return value indicating execution paused
         }
