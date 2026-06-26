@@ -19,11 +19,10 @@ build/web: build web/web_shifty.wasm web/web_shifty.js web/web_shifty.html
 	cp  web/web_shifty.wasm \
 		web/web_shifty.js \
 		web/web_shifty.html \
-		web/debug.json \
 		build/web
 
 $(SHIFTY): build/web src/shifty.8085.asm src/tiles.8085.asm src/levels.8085.asm Makefile $(ASM)
-	$(ASM) -c -o $(SHIFTY) -d web/debug.json src/shifty.8085.asm
+	$(ASM) -c -o $(SHIFTY) -d build/web/debug.json src/shifty.8085.asm
 	cp $(SHIFTY) build/web
 	python tools/co2bas.py $(SHIFTY) -o $(SHIFTY).bas
 

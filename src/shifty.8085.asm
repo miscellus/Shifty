@@ -3,10 +3,15 @@ TileIndexShift      equ 1
 GroundTileIndexMask equ 0b00000011
 NeedsRedrawMask     equ 0b00000001
 
-DirectionRight equ 0
-DirectionUp    equ 1
-DirectionLeft  equ 2
-DirectionDown  equ 3
+; Direction encoding:
+; bit 0: Axis (0: X, 1: Y)
+; bit 1: Sign of direction along axis (0: positive, 1: negative)
+DirectionSignBit equ 0b10
+DirectionAxisBit equ 0b01
+DirectionRight equ 0b00
+DirectionUp    equ 0b01
+DirectionLeft  equ 0b10
+DirectionDown  equ 0b11
 
 TargetNec equ 1
 ; TargetT100 equ 1
@@ -15,6 +20,7 @@ TargetNec equ 1
 	org MapRamBase
 GameStart:
 	call GameInit
+
 GameLoop:
 	call CheckStopKey
 	rc
@@ -73,9 +79,9 @@ IsPosOutOfBounds:
 	ret
 
 PlayerMove:
-	; [C] = Direction (0 -> right, 1 -> up, 2 -> right, 3 -> down)
-	; This procedure pushes the pushable positions to the stack
-	; -> [A] = the number of positions pushed to the stack
+; [C] = Direction (0 -> right, 1 -> up, 2 -> right, 3 -> down)
+; This procedure pushes the pushable positions to the stack
+; -> [A] = the number of positions pushed to the stack
 	lhld PlayerPos
 	xchg ; [D] = x, [E] = y
 
@@ -85,14 +91,14 @@ PlayerMove:
 	lda PlayerMoveDir
 	; mov a, c ; [A] = direction
 	call TryGetNeigborPos
-	jc .cancelMove ; return with carry out of bounds and the move should be cancelled
+	jc .foundSolid ; return with carry out of bounds and the move should be cancelled
 
 	call TileAddressFromPos
 	mov a, m
 
 	; Check for solid
 	rlc ; [CF] = 1 means solid [CF] = 0 means not solid
-	jc .cancelMove
+	jc .foundSolid
 
 	; Check for pushables
 	rlc ; [CF] = 1 means pushable, 0 means empty in this case because it was not solid
@@ -129,7 +135,7 @@ PlayerMove:
 	mov a, m
 	ani TileIndexMask
 	cpi TileCrateStone_Index << TileIndexShift
-	jnz .cancelMove ; The previous tile was not a stone, so cancel move
+	jnz .foundSolid ; The previous tile was not a stone, so cancel move
 
 	; Stone is going into hole
 
@@ -163,12 +169,55 @@ PlayerMove:
 
 	jmp .loop
 
+.foundSolid:
+	; Go backwards through the stack and find the first arrow pointing
+	; at a right angle to the current direction of movement.
+	; If such a perpendicular arrow is found:
+	; return from here and continue searching for solids from that arrow in the direction dictated by that arrow.
+	;
+	; i.e. the arrow changes the direction of search
+	;
+	; If during this search we get all the way back to the player, the move can't be performed.
+	;
+
+	; [B] = the number of places pushed to the stack so far
+	; [SP] = the top of the stack, currently pointing to the last pushed thing
+.findArrowInTrain:
+	pop d
+	dcr b
+	jz .returnMoveBlocked
+	call TileAddressFromPos
+
+	inx h
+	mov a, m ; Get tile index
+	ani TileIndexMask
+	xri TileRightArrow_Index << TileIndexShift
+	cpi 4 << TileIndexShift
+	jnc .findArrowInTrain ; Not an arrow
+
+	; At this point, it is an arrow
+	rrc
+	mov c, a ; [C] = Arrow direction
+
+	; If along the same movement axis, keep looping
+	lda PlayerMoveDir
+	xra c
+	rrc ; [CY] = PlayerMoveDir.Axis XOR arrow.Axis
+	jnc .findArrowInTrain ; Keep searching, this arrow is pointing along current movement axis, we need to find a perpendicular arrow
+
+	; The found arrow is perpendicular
+	; Now, change the PlayerMoveDir
+	mov a, c ; [A] = Arrow direction
+	sta PlayerMoveDir
+	jmp .loop ; Continue main loop
+
 .cancelMove:
 	; Cancel the move, since we found a solid
 	; Unwind the stack
 	pop h
 	dcr b
 	jnz .cancelMove
+.returnMoveBlocked:
 	stc ; return with carry to indicate that the move was blocked
 	ret
 
@@ -231,6 +280,12 @@ PlayerMove:
 	mov m, a
 
 	ora a ; clear carry bit to indicate that the move was performed successfully
+	ret
+
+; nocheckin (debug)
+ReadInput_:
+	mvi c, DirectionRight
+	ora a
 	ret
 
 ReadInput:
@@ -305,7 +360,7 @@ LoadLevel:
 	ret
 
 GameInit:
-	lxi h, Level1
+	lxi h, Level0_6
 	call LoadLevel
 
 	lda Level.PlayerStartX

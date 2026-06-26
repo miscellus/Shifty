@@ -8,6 +8,13 @@
         CLOCK_FREQ: 2457600
     };
 
+    // Explicit memory offsets for the WASM CPU struct
+    // (Ideally, these should be exported directly from WASM in the future)
+    const CPU_OFFSETS = {
+        pc: 0, sp: 2, a: 4, b: 5, c: 6, d: 7, e: 8, h: 9, l: 10,
+        cy: 11, p: 12, ac: 13, z: 14, s: 15
+    };
+
     const KEY_MAP = {
         'KeyZ': [0, 0], 'KeyX': [0, 1], 'KeyC': [0, 2], 'KeyV': [0, 3],
         'KeyB': [0, 4], 'KeyN': [0, 5], 'KeyM': [0, 6], 'Comma': [0, 7],
@@ -121,6 +128,10 @@
             this.tStatesTooMany = 0;
             this.frameCount = 0;
 
+            // Caches
+            this.lastCpuState = {};
+            this.cachedColors = { bg: null, pixel: null, shadow: null };
+
             // DOM Elements Mapping
             this.ui = {
                 canvas: document.getElementById('canvas'),
@@ -155,6 +166,7 @@
             if (!this.setupWebGL()) return;
 
             this.setupWindowListeners();
+            this.updateShaderColors(true); // Initial color cache population
 
             try {
                 const { instance } = await WebAssembly.instantiateStreaming(await fetch('web_shifty.wasm'));
@@ -164,11 +176,13 @@
                 const gameBufferPtr = this.vm.allocate(gameBytes.byteLength);
                 const gameBuffer = new Uint8Array(this.vm.memory.buffer, gameBufferPtr, gameBytes.byteLength);
                 gameBuffer.set(gameBytes);
+
                 this.bindWasmMemory();
 
                 await this.loadDebugInfo();
                 this.setupDebugger();
                 this.setupInputListeners();
+
                 this.vm.reset_emulator_with_co_file(gameBufferPtr, gameBytes.byteLength);
                 this.setupEditableFlags();
 
@@ -249,36 +263,44 @@
                 }
             };
             window.addEventListener('resize', resizeCanvas);
+
+            // Listen for theme changes to update cached colors
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+                this.updateShaderColors(true);
+            });
+
             resizeCanvas();
         }
 
-        updateShaderColors() {
-            this.gl.uniform3fv(this.colorBgLoc, this.getCSSColorAsVec3('--lcd-bg'));
-            this.gl.uniform3fv(this.colorPixelLoc, this.getCSSColorAsVec3('--lcd-pixel'));
-            this.gl.uniform3fv(this.colorShadowLoc, this.getCSSColorAsVec3('--lcd-shadow'));
+        updateShaderColors(forceUpdate = false) {
+            if (forceUpdate || !this.cachedColors.bg) {
+                this.cachedColors.bg = this.getCSSColorAsVec3('--lcd-bg');
+                this.cachedColors.pixel = this.getCSSColorAsVec3('--lcd-pixel');
+                this.cachedColors.shadow = this.getCSSColorAsVec3('--lcd-shadow');
+
+                this.gl.uniform3fv(this.colorBgLoc, this.cachedColors.bg);
+                this.gl.uniform3fv(this.colorPixelLoc, this.cachedColors.pixel);
+                this.gl.uniform3fv(this.colorShadowLoc, this.cachedColors.shadow);
+            }
         }
 
         // --- Input Handling ---
         setupEditableFlags() {
-            // Map each UI element to its corresponding byte offset in the Wasm memory
             const flagMap = [
-                { el: this.ui.cpu.cy, offset: 11 },
-                { el: this.ui.cpu.p,  offset: 12 },
-                { el: this.ui.cpu.ac, offset: 13 },
-                { el: this.ui.cpu.z,  offset: 14 },
-                { el: this.ui.cpu.s,  offset: 15 }
+                { el: this.ui.cpu.cy, offset: CPU_OFFSETS.cy },
+                { el: this.ui.cpu.p,  offset: CPU_OFFSETS.p },
+                { el: this.ui.cpu.ac, offset: CPU_OFFSETS.ac },
+                { el: this.ui.cpu.z,  offset: CPU_OFFSETS.z },
+                { el: this.ui.cpu.s,  offset: CPU_OFFSETS.s }
             ];
 
             flagMap.forEach(({ el, offset }) => {
                 if (!el) return;
-
-                // Make it obvious that the flag is clickable
                 el.style.cursor = 'pointer';
 
                 el.addEventListener('click', () => {
-                    if (!this.cpuView) return; // Ensure memory is bound
+                    if (!this.cpuView) return;
 
-                    // Read current value, toggle it, and write it back
                     const currentVal = this.cpuView.getUint8(offset);
                     const newVal = currentVal === 0 ? 1 : 0;
                     this.cpuView.setUint8(offset, newVal);
@@ -291,6 +313,9 @@
 
         setupInputListeners() {
             const handleKey = (e, isPressed) => {
+                // Ignore auto-repeat flooding
+                if (isPressed && e.repeat) return;
+
                 if (isPressed) {
                     if (e.code == 'F11') {
                         if (this.isPaused) e.preventDefault();
@@ -314,13 +339,12 @@
                     if (e.code == 'F9') {
                         e.preventDefault();
                         this.toggleBreakpoint();
-                        return
+                        return;
                     }
                 }
 
                 const mappedKey = KEY_MAP[e.code];
                 if (mappedKey && this.vm) {
-                    // e.preventDefault();
                     this.vm.set_key_state(mappedKey[0], mappedKey[1], isPressed ? 1 : 0);
                 }
             };
@@ -443,8 +467,6 @@
                 const lineEl = document.getElementById(`file-${mapping.fileId}-line-${mapping.line}`);
                 if (lineEl) {
                     lineEl.classList.add('active');
-
-                    // Changed from 'smooth' to 'auto' to prevent animation cancellations
                     lineEl.scrollIntoView({ block: 'center', behavior: 'auto' });
                     this.currentActiveLineElement = lineEl;
                 }
@@ -463,8 +485,7 @@
             if (paused) {
                 this.vm.clear_temporary_breakpoints();
                 this.updateDebuggerState(this.getCpuState());
-            }
-            else {
+            } else if (this.currentActiveLineElement) {
                 this.currentActiveLineElement.classList.remove('active');
             }
         }
@@ -474,24 +495,22 @@
             const startMapping = this.sourceMap[this.getCpuProgramCounter()];
 
             let safeguards = 0;
+            const MAX_STEPS = 10000;
 
-            // Step until we reach a DIFFERENT mapped line, or hit safeguard limit
             do {
                 this.vm.step_into();
                 const currMapping = this.sourceMap[this.getCpuProgramCounter()];
                 safeguards++;
 
-                // If we land on a mapped line, check if it's a new line
                 if (currMapping) {
-                    // If we started unmapped, stop at the first mapped line we find
                     if (!startMapping) break;
-
-                    // If it's a different line/file from where we started, stop
-                    if (currMapping.fileId !== startMapping.fileId || currMapping.line !== startMapping.line) {
-                        break;
-                    }
+                    if (currMapping.fileId !== startMapping.fileId || currMapping.line !== startMapping.line) break;
                 }
-            } while (safeguards < 10000); // Increased safeguard to allow stepping over larger unmapped blocks
+            } while (safeguards < MAX_STEPS);
+
+            if (safeguards >= MAX_STEPS) {
+                console.warn("Debugger step limit reached. Broke out of loop to prevent UI hang.");
+            }
 
             this.updateDebuggerState(this.getCpuState());
         }
@@ -501,25 +520,22 @@
             const startMapping = this.sourceMap[this.getCpuProgramCounter()];
 
             let safeguards = 0;
+            const MAX_STEPS = 10000;
 
-            // Step until we reach a DIFFERENT mapped line, or hit safeguard limit
             do {
                 this.vm.step_over();
-
                 const currMapping = this.sourceMap[this.getCpuProgramCounter()];
                 safeguards++;
 
-                // If we land on a mapped line, check if it's a new line
                 if (currMapping) {
-                    // If we started unmapped, stop at the first mapped line we find
                     if (!startMapping) break;
-
-                    // If it's a different line/file from where we started, stop
-                    if (currMapping.fileId !== startMapping.fileId || currMapping.line !== startMapping.line) {
-                        break;
-                    }
+                    if (currMapping.fileId !== startMapping.fileId || currMapping.line !== startMapping.line) break;
                 }
-            } while (safeguards < 10000); // Increased safeguard to allow stepping over larger unmapped blocks
+            } while (safeguards < MAX_STEPS);
+
+            if (safeguards >= MAX_STEPS) {
+                console.warn("Debugger step limit reached. Broke out of loop to prevent UI hang.");
+            }
 
             this.updateDebuggerState(this.getCpuState());
         }
@@ -567,64 +583,72 @@
         }
 
         getCpuProgramCounter() {
-            return this.cpuView.getUint16(0, true);
+            return this.cpuView.getUint16(CPU_OFFSETS.pc, true);
         }
 
         getCpuStackPointer() {
-            return this.cpuView.getUint16(2, true);
+            return this.cpuView.getUint16(CPU_OFFSETS.sp, true);
         }
-
 
         getCpuState() {
             const littleEndian = true;
             return {
-                pc: this.cpuView.getUint16(0, littleEndian),
-                sp: this.cpuView.getUint16(2, littleEndian),
-                a:  this.cpuView.getUint8(4),
-                b:  this.cpuView.getUint8(5),
-                c:  this.cpuView.getUint8(6),
-                d:  this.cpuView.getUint8(7),
-                e:  this.cpuView.getUint8(8),
-                h:  this.cpuView.getUint8(9),
-                l:  this.cpuView.getUint8(10),
-                cy: this.cpuView.getUint8(11),
-                p:  this.cpuView.getUint8(12),
-                ac: this.cpuView.getUint8(13),
-                z:  this.cpuView.getUint8(14),
-                s:  this.cpuView.getUint8(15)
+                pc: this.cpuView.getUint16(CPU_OFFSETS.pc, littleEndian),
+                sp: this.cpuView.getUint16(CPU_OFFSETS.sp, littleEndian),
+                a:  this.cpuView.getUint8(CPU_OFFSETS.a),
+                b:  this.cpuView.getUint8(CPU_OFFSETS.b),
+                c:  this.cpuView.getUint8(CPU_OFFSETS.c),
+                d:  this.cpuView.getUint8(CPU_OFFSETS.d),
+                e:  this.cpuView.getUint8(CPU_OFFSETS.e),
+                h:  this.cpuView.getUint8(CPU_OFFSETS.h),
+                l:  this.cpuView.getUint8(CPU_OFFSETS.l),
+                cy: this.cpuView.getUint8(CPU_OFFSETS.cy),
+                p:  this.cpuView.getUint8(CPU_OFFSETS.p),
+                ac: this.cpuView.getUint8(CPU_OFFSETS.ac),
+                z:  this.cpuView.getUint8(CPU_OFFSETS.z),
+                s:  this.cpuView.getUint8(CPU_OFFSETS.s)
             };
         }
 
         updateCpuUI(cpu) {
             if (!this.ui.cpu.pc) return; // Fail gracefully if debugger UI doesn't exist
 
-            this.ui.cpu.pc.textContent = this.toHex(cpu.pc, 4);
-            this.ui.cpu.sp.textContent = this.toHex(cpu.sp, 4);
-
-            this.ui.cpu.a.textContent = this.toHex(cpu.a, 2);
-            this.ui.cpu.b.textContent = this.toHex(cpu.b, 2);
-            this.ui.cpu.c.textContent = this.toHex(cpu.c, 2);
-            this.ui.cpu.d.textContent = this.toHex(cpu.d, 2);
-            this.ui.cpu.e.textContent = this.toHex(cpu.e, 2);
-            this.ui.cpu.h.textContent = this.toHex(cpu.h, 2);
-            this.ui.cpu.l.textContent = this.toHex(cpu.l, 2);
-
-            this.ui.cpu.bc.textContent = this.toHex((cpu.b << 8) | cpu.c, 4);
-            this.ui.cpu.de.textContent = this.toHex((cpu.d << 8) | cpu.e, 4);
-            this.ui.cpu.hl.textContent = this.toHex((cpu.h << 8) | cpu.l, 4);
-
-            const updateFlag = (el, val) => {
-                if (el) {
-                    el.textContent = val;
-                    el.classList.toggle('active', val !== 0);
+            // Helper to prevent DOM thrashing by checking cached state
+            const updateText = (el, key, val, padding = 2) => {
+                const hex = this.toHex(val, padding);
+                if (this.lastCpuState[key] !== hex) {
+                    el.textContent = hex;
+                    this.lastCpuState[key] = hex;
                 }
             };
 
-            updateFlag(this.ui.cpu.cy, cpu.cy);
-            updateFlag(this.ui.cpu.p, cpu.p);
-            updateFlag(this.ui.cpu.ac, cpu.ac);
-            updateFlag(this.ui.cpu.z, cpu.z);
-            updateFlag(this.ui.cpu.s, cpu.s);
+            updateText(this.ui.cpu.pc, 'pc', cpu.pc, 4);
+            updateText(this.ui.cpu.sp, 'sp', cpu.sp, 4);
+            updateText(this.ui.cpu.a, 'a', cpu.a, 2);
+            updateText(this.ui.cpu.b, 'b', cpu.b, 2);
+            updateText(this.ui.cpu.c, 'c', cpu.c, 2);
+            updateText(this.ui.cpu.d, 'd', cpu.d, 2);
+            updateText(this.ui.cpu.e, 'e', cpu.e, 2);
+            updateText(this.ui.cpu.h, 'h', cpu.h, 2);
+            updateText(this.ui.cpu.l, 'l', cpu.l, 2);
+
+            updateText(this.ui.cpu.bc, 'bc', (cpu.b << 8) | cpu.c, 4);
+            updateText(this.ui.cpu.de, 'de', (cpu.d << 8) | cpu.e, 4);
+            updateText(this.ui.cpu.hl, 'hl', (cpu.h << 8) | cpu.l, 4);
+
+            const updateFlag = (el, key, val) => {
+                if (el && this.lastCpuState[key] !== val) {
+                    el.textContent = val;
+                    el.classList.toggle('active', val !== 0);
+                    this.lastCpuState[key] = val;
+                }
+            };
+
+            updateFlag(this.ui.cpu.cy, 'cy', cpu.cy);
+            updateFlag(this.ui.cpu.p, 'p', cpu.p);
+            updateFlag(this.ui.cpu.ac, 'ac', cpu.ac);
+            updateFlag(this.ui.cpu.z, 'z', cpu.z);
+            updateFlag(this.ui.cpu.s, 's', cpu.s);
         }
 
         // --- Render Loop ---
@@ -644,12 +668,11 @@
                 }
             }
 
-            // CRITICAL: Re-bind views if WebAssembly memory grew
             if (this.pixelView.byteLength === 0) {
                 this.bindWasmMemory();
             }
 
-            this.updateShaderColors();
+            // Colors are only uploaded to the shader via uniforms if cached values were missing/forced
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.texture);
             this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, CONFIG.WIDTH, CONFIG.HEIGHT, this.gl.RGBA, this.gl.UNSIGNED_BYTE, this.pixelView);
             this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
