@@ -182,10 +182,20 @@ PlayerMove:
 
 	; [B] = the number of places pushed to the stack so far
 	; [SP] = the top of the stack, currently pointing to the last pushed thing
-.findArrowInTrain:
+.perpArrowSearchLoop:
 	pop d
 	dcr b
 	jz .returnMoveBlocked
+
+	; We must check if this is a real position or a search direction change
+	mov a, d
+	cpi 0xFF
+	jnz .notDirectionChangeSentinel
+	mov a, e ; [A] = Restored search direction
+	sta PlayerMoveDir
+	jmp .perpArrowSearchLoop
+
+.notDirectionChangeSentinel:
 	call TileAddressFromPos
 
 	inx h
@@ -193,7 +203,7 @@ PlayerMove:
 	ani TileIndexMask
 	xri TileRightArrow_Index << TileIndexShift
 	cpi 4 << TileIndexShift
-	jnc .findArrowInTrain ; Not an arrow
+	jnc .perpArrowSearchLoop ; Not an arrow
 
 	; At this point, it is an arrow
 	rrc
@@ -201,14 +211,30 @@ PlayerMove:
 
 	; If along the same movement axis, keep looping
 	lda PlayerMoveDir
+	mov l, a ; [L] = Current search direction
 	xra c
 	rrc ; [CY] = PlayerMoveDir.Axis XOR arrow.Axis
-	jnc .findArrowInTrain ; Keep searching, this arrow is pointing along current movement axis, we need to find a perpendicular arrow
+	jnc .perpArrowSearchLoop ; Keep searching, this arrow is pointing along current movement axis, we need to find a perpendicular arrow
 
 	; The found arrow is perpendicular
+
+	; Before updating the search direction, we first push a
+	; "revert search direction"-word to the stack
+	; to handle this scenario found by Eydi av Hamri.
+	;                                  Thanks friend. (^:
+	;         @
+	;         >#
+	;         ^#
+	;         ##
+
+	mvi h, 0xff ; Sentinel that we can tell apart from a position
+	push h ; [HL] = 0xFF<Current search direction>
+	inr b ; account for added stack entry
+
 	; Now, change the PlayerMoveDir
-	mov a, c ; [A] = Arrow direction
+	mov a, c ; [A] = Arrow direction/
 	sta PlayerMoveDir
+
 	jmp .loop ; Continue main loop
 
 .cancelMove:
@@ -232,6 +258,10 @@ PlayerMove:
 	xchg               ; Restore [DE] to target position
 .skipPlayerPosUpdate:
 	pop h ; [HL] = closest pos from player (from the stack)
+
+	mov a, h
+	cpi 0xFF ; Detect search direction sentinel
+	jz .performMoveDecrementAndLoop
 
 	push h ; Save the closest pos. This MUST become the furthest pos for the next iteration!
 	push b ; save loop count
@@ -266,6 +296,7 @@ PlayerMove:
 	pop b ; restore loop count
 	pop d ; [DE] = closest pos (this is the NEW target space for the next loop!)
 
+.performMoveDecrementAndLoop:
 	; Decrement and loop until B hits 0
 	dcr b
 	jnz .performMove
