@@ -1,16 +1,22 @@
-. = TileEmpty #redraw
-# = TileWallBrick #solid #redraw
-@ = TileBoxKidDown #player #redraw
-s = TileCrateStone #pushable #redraw
-h = TileHole #redraw
-> = TileRightArrow #pushable #redraw
-^ = TileUpArrow #pushable #redraw
-< = TileLeftArrow #pushable #redraw
-v = TileDownArrow #pushable #redraw
+. = TileEmpty
+# = TileWallBrick #solid
+@ = TileBoxKidDown #player #closedForSearch
+s = TileCrateStone #pushable
+h = TileHole
+> = TileRightArrow #pushable
+^ = TileUpArrow #pushable
+< = TileLeftArrow #pushable
+v = TileDownArrow #pushable
 
-#solid = 0x0080
-#pushable = 0x0040
-#redraw = 0x0100
+Nicolas
+........................
+........................
+...@sssssssss>^<v......^
+........................
+........................
+........................
+........................
+........................
 
 Level0
 ........................

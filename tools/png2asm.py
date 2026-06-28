@@ -43,8 +43,10 @@ def process_image(path):
 def format_byte(b):
     return f"0b{b:08b}"
 
+from pprint import pprint
 def main(inp_folder, out_file):
     pngs = sorted(f for f in os.listdir(inp_folder) if f.lower().endswith('.png'))
+    pprint(pngs)
     if not pngs:
         print("No PNG files found.")
         return

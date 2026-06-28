@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Callable
 import sys
 import warnings
+from itertools import islice
 
 LEVEL_WIDTH = 24
 LEVEL_HEIGHT = 8
@@ -54,7 +55,18 @@ def parse_mapping_line(line: str) -> TileDef:
         raise ValueError(f"mapping key must be a single character: {line!r}")
     name = m.group("name")
     tags = [t.lstrip("#") for t in m.group("rest").split() if t.startswith("#")]
+    tags.append("needsRedraw")
     return TileDef(char=ch, name=name, tags=tags)
+
+def nice_lines(path: Path):
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            comment_index = line.rfind(';')
+            if comment_index >= 0:
+                line = line[:comment_index]
+            yield line
+    yield None
 
 def parse_input_with_tagmap(path: Path) -> Tuple[Dict[str, TileDef], Dict[str, int], List[Level]]:
     """
@@ -64,98 +76,53 @@ def parse_input_with_tagmap(path: Path) -> Tuple[Dict[str, TileDef], Dict[str, i
       - levels (name line, then 8 rows of 24 chars)
     """
     mappings: Dict[str, TileDef] = {}
-    tag_to_attr: Dict[str, int] = {}
+    tag_to_attr: Dict[str, int] = {
+        "solid"           : 1 << 7,
+        "closedForSearch" : 1 << 6,
+        "pushable"        : 1 << 5,
+        "needsRedraw"     : 1 << 15,
+    }
     levels: List[Level] = []
 
-    with path.open("r", encoding="utf-8") as f:
-        # 1) mappings until blank line
-        for raw in f:
-            line = raw.strip()
-            if not line:
-                break
-            if line.startswith(";") or (line.startswith("#") and "=" not in line):
-                continue
-            td = parse_mapping_line(line)
-            if td.char in mappings:
-                raise ValueError(f"duplicate mapping for character {td.char!r}")
-            mappings[td.char] = td
+    lines = nice_lines(path)
+    line = ""
 
-        # 2) optional tag->attr mapping block: peek next non-empty non-comment line
-        pending_lines: List[str] = []
-        next_line = None
-        for raw in f:
-            stripped = raw.strip()
-            if not stripped:
-                continue  # skip blank while looking for start
-            if stripped.startswith(";") or (stripped.startswith("#") and "=" not in stripped):
-                continue
-            next_line = stripped
+    for line in lines:
+        if line is None:
+            raise ValueError(f"unexpected EOF while reading level '{level_name}'")
+        if not line:
             break
+        # if '=' not in line:
+        #     continue
+        td = parse_mapping_line(line)
+        if td.char in mappings:
+            raise ValueError(f"duplicate mapping for character {td.char!r}")
+        mappings[td.char] = td
 
-        if next_line is not None and "=" in next_line:
-            # next_line is first tag map entry; parse tag map until blank line
-            m = _tag_map_re.match(next_line)
-            if not m:
-                raise ValueError(f"invalid tag map line: {next_line!r}  (expected 'tag = 0xNN' or 'tag = N')")
-            tag = m.group("tag").lstrip("#")
-            val = m.group("val")
-            tag_to_attr[tag] = int(val, 0)
+    while True:
+        line = next(lines)
+        if line is None:
+            break
+        if len(line) == 0:
+            continue
 
-            # continue reading tag map lines until blank line
-            for raw in f:
-                line = raw.strip()
-                if not line:
-                    break
-                if line.startswith(";") or (line.startswith("#") and "=" not in line):
-                    continue
-                m = _tag_map_re.match(line)
-                if not m:
-                    raise ValueError(f"invalid tag map line: {line!r}  (expected 'tag = 0xNN' or 'tag = N')")
-                tag = m.group("tag").lstrip("#")
-                val = m.group("val")
-                attr = int(val, 0)
-                if not (0 <= attr <= 0xFFFF):
-                    raise ValueError(f"attribute value out of range: {val}")
-                tag_to_attr[tag] = attr
+        level_name = _sanitize_label(line)
+        rows: List[List[Tile]] = []
+        for row in islice(lines, 8):
+            if row is None:
+                raise ValueError(f"unexpected EOF while reading level '{level_name}', row {row_index}")
 
-            print(tag_to_attr)
-        else:
-            # no tag map: if next_line exists and is not a tag map, push it back into an iterator
-            if next_line is not None:
-                pending_lines.append(next_line)
+            if len(row) != LEVEL_WIDTH:
+                raise ValueError(f"level '{level_name}' row {row_index} has length {len(row)} (expected {LEVEL_WIDTH})")
 
-        # 3) levels
-        # We'll create an iterator that yields pending_lines first, then the rest of file lines.
-        def line_iter():
-            for l in pending_lines:
-                yield l + "\n"
-            for l in f:
-                yield l
+            for c in row:
+                if c not in mappings:
+                    raise ValueError(f"level '{level_name}' references unknown tile character {c!r}")
 
-        it = line_iter()
-        while True:
-            # find next non-empty name line
-            for raw in it:
-                name_line = raw.rstrip("\n")
-                if name_line.strip():
-                    break
-            else:
-                break  # EOF
-            level_name = name_line.strip()
-            rows: List[List[Tile]] = []
-            for row_index in range(1, LEVEL_HEIGHT + 1):
-                try:
-                    row_raw = next(it)
-                except StopIteration:
-                    raise ValueError(f"unexpected EOF while reading level '{level_name}', row {row_index}")
-                row = row_raw.rstrip("\n")
-                if len(row) != LEVEL_WIDTH:
-                    raise ValueError(f"level '{level_name}' row {row_index} has length {len(row)} (expected {LEVEL_WIDTH})")
-                for c in row:
-                    if c not in mappings:
-                        raise ValueError(f"level '{level_name}' references unknown tile character {c!r}")
-                rows.append([Tile(char=c, definition=mappings[c]) for c in row])
-            levels.append(Level(name=level_name, width=LEVEL_WIDTH, height=LEVEL_HEIGHT, grid=rows))
+            rows.append([Tile(char=c, definition=mappings[c]) for c in row])
+
+        levels.append(Level(name=level_name, width=LEVEL_WIDTH, height=LEVEL_HEIGHT, grid=rows))
+
     return mappings, tag_to_attr, levels
 
 def attach_indices(mappings: Dict[str, TileDef], asm_indices: Dict[str, int], levels: List[Level]) -> None:
@@ -201,26 +168,14 @@ def compute_tile_word(td: TileDef, tag_to_attr: Dict[str, int]) -> int:
     Compute a 16-bit tile word for one tile definition according to the bitfield:
 
       Bits 0–1  (2 bits): groundTileImage        // what to draw when tile image is 0
-      Bits 2–5  (4 bits): reserved1
+      Bits 2–4  (3 bits): reserved1
+      Bit 5     (1 bit) : closedForSearch
       Bit 6     (1 bit) : isPushable
       Bit 7     (1 bit) : isSolid
-      Bit 8     (1 bit) : needsRedraw            // dirty bit (not set by tags by default)
-      Bits 9–12 (4 bits): tileImage              // primary tile image index (0–15)
-      Bits 13–15(3 bits): reserved2
+      Bits 8–11 (4 bits): tileImageIndex         // primary tile image index (0–15)
+      Bits 12–14(3 bits): reserved2
+      Bit 15    (1 bit) : needsRedraw            // dirty bit (not set by tags by default)
 
-    Mapping rules implemented:
-      - tileImage (bits 8–11) comes from the tile's asm index.
-        Default mapping_strategy reduces via index % 16.
-      - Exception: if the tile index is in 0..3 (a pure ground/background tile), tileImage is forced to 0
-        and groundTileImage (bits 0–1) is set to that index.
-      - groundTileImage (bits 0–1) is set to the tile index if tile index in 0..3; otherwise 0.
-      - Tag-driven flags:
-          - 'solid' sets bit 7 (isSolid)
-          - 'pushable' sets bit 6 (isPushable)
-          - 'player' does not set bits but is used elsewhere for player start
-      - Entries in tag_to_attr that map to these semantic tags are ignored for per-byte OR logic;
-        if a tag->attr mapping exists for a known semantic tag and its bit value disagrees with the
-        semantic bit, a warning is emitted and the semantic mapping is preferred.
     """
 
     word = 0
@@ -239,7 +194,7 @@ def compute_tile_word(td: TileDef, tag_to_attr: Dict[str, int]) -> int:
         raise RuntimeError(f"asm index {td.index} out of bounds for {td.name}")
 
     word |= ground  # bits 0-1
-    word |= (tile_image & 0xF) << 9
+    word |= (tile_image & 0xF) << 8
 
     for tag in td.tags:
         attr = tag_to_attr.get(tag, 0)

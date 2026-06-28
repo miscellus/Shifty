@@ -1,7 +1,7 @@
-TileIndexMask       equ 0b00011110
-TileIndexShift      equ 1
-GroundTileIndexMask equ 0b00000011
-NeedsRedrawMask     equ 0b00000001
+TileIndexMask       equ 0b00001111 ; bits 8-11 of tile word
+GroundTileIndexMask equ 0b00000011 ; bits 0-2 of tile word
+NeedsRedrawMask     equ 0b10000000 ; bit 15 of tile word
+ClosedForSearchMask equ 0b01000000 ; bit 5 of tile word
 
 ; Direction encoding:
 ; bit 0: Axis (0: X, 1: Y)
@@ -85,6 +85,11 @@ PlayerMove:
 	lhld PlayerPos
 	xchg ; [D] = x, [E] = y
 
+	call TileAddressFromPos
+	mov a, m
+	ori ClosedForSearchMask
+	mov m, a
+
 	push d ; push our initial position
 	mvi b, 1 ; our initial position count is 1
 .loop:
@@ -98,6 +103,9 @@ PlayerMove:
 
 	; Check for solid
 	rlc ; [CF] = 1 means solid [CF] = 0 means not solid
+	jc .foundSolid
+
+	rlc ; [CF] = 1 means "closed for search", i.e. we already searched that tile
 	jc .foundSolid
 
 	; Check for pushables
@@ -134,7 +142,7 @@ PlayerMove:
 	inx h
 	mov a, m
 	ani TileIndexMask
-	cpi TileCrateStone_Index << TileIndexShift
+	cpi TileCrateStone_Index
 	jnz .foundSolid ; The previous tile was not a stone, so cancel move
 
 	; Stone is going into hole
@@ -164,6 +172,11 @@ PlayerMove:
 
 .foundPushable:
 	; it's a pushable, so push it (^;
+	; rrc
+	; rrc
+	; rrc
+	; ori ClosedForSearchMask
+	; mov m, a
 	push d
 	inr b ; increment position count
 
@@ -201,12 +214,11 @@ PlayerMove:
 	inx h
 	mov a, m ; Get tile index
 	ani TileIndexMask
-	xri TileRightArrow_Index << TileIndexShift
-	cpi 4 << TileIndexShift
+	xri TileRightArrow_Index
+	cpi 4
 	jnc .perpArrowSearchLoop ; Not an arrow
 
 	; At this point, it is an arrow
-	rrc
 	mov c, a ; [C] = Arrow direction
 
 	; If along the same movement axis, keep looping
@@ -248,6 +260,7 @@ PlayerMove:
 	ret
 
 .performMove:
+	call ClearClosedForSearch
 	; Check if we are moving the player this iteration (B=1).
 	; If B=1, DE currently holds the target coordinates for the player.
 	mov a, b
@@ -311,6 +324,23 @@ PlayerMove:
 	mov m, a
 
 	ora a ; clear carry bit to indicate that the move was performed successfully
+	ret
+
+ClearClosedForSearch:
+	push h
+	push b
+	lxi h, Level
+	mvi b, 24*8
+.loop:
+	mov a, m
+	ani ~ClosedForSearchMask
+	mov m, a
+	inx h
+	inx h
+	dcr b
+	jnz .loop
+	pop b
+	pop h
 	ret
 
 ; nocheckin (debug)
@@ -455,13 +485,13 @@ Draw:
 	mov b, m ; Tile attrib + ground tile index
 	inx h
 	mov a, m ; tile index + redraw flag
-	rrc ; TileIndexShift
+	rlc
 	jc .needsRedraw
 	inx h ; Skip to next tile
 	jmp .continue
 .needsRedraw:
-
-	ani TileIndexMask >> TileIndexShift ; shift because of previous RRC
+	rrc
+	ani TileIndexMask
 	jnz .skipGroundTileImage
 	mov a, b
 	ani GroundTileIndexMask
@@ -482,8 +512,7 @@ Draw:
 	pop h ; restore level offset
 
 .clearRedrawFlag:
-	rlc
-	ani ~NeedsRedrawMask
+	ani ~NeedsRedrawMask & 0xff
 	mov m, a
 	inx h
 
