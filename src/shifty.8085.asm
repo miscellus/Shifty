@@ -2,14 +2,9 @@
 ;
 ; How tiles are stored in the loaded level:
 ;
-; byte 0 (little endian)
-GroundTileIndexMask equ 0b00000011 ; bits 0-2 of tile word
-PushableMask        equ 0b10000000 ; bit 7 of tile word
-
-; byte 1 (little endian)
-NeedsRedrawMask     equ 0b10000000 ; bit 15 of tile word
-TileIndexMask       equ 0b00001111 ; bits 8-11 of tile word
-
+PushableMask        equ 0b10000000 ; bit 7 of tile
+NeedsRedrawMask     equ 0b01000000 ; bit 6 of tile
+TileIndexMask       equ 0b00011111 ; bits 0-5 of tile
 
 ; Direction encoding:
 ; bit 0: Axis (0: X, 1: Y)
@@ -111,18 +106,15 @@ PlayerMove:
 	cpi PushableMask
 	jnc .foundPushable
 
-	; Check for hole
-	ani GroundTileIndexMask ; because of previous two RLC instructions
-	cpi TileHole_Index
-	jz .foundHole
-
-	inx h
-	mov a, m
 	ani TileIndexMask
 
 	; Check for wall
 	cpi TileWallBrick_Index
 	jz .foundSolid
+
+	; Check for hole
+	cpi TileHole_Index
+	jz .foundHole
 
 	; Block the move if search has looped around and is trying to push into current player position
 	xri TileBoxKidRight_Index
@@ -151,7 +143,6 @@ PlayerMove:
 
 	; Get address of closest pos
 	call TileAddressFromPos ; [HL] = closest tile address
-	inx h
 	mov a, m
 	ani TileIndexMask
 	cpi TileCrateStone_Index
@@ -160,23 +151,11 @@ PlayerMove:
 	; Stone is going into hole
 
 	; Clear stone tile to ground
-	mov a, m
-	ani ~TileIndexMask
-	ori NeedsRedrawMask
-	mov m, a
-	dcx h
-	mov a, m
-	ani GroundTileIndexMask
-	mov m, a
+	mvi m, TileEmpty_Index | NeedsRedrawMask
 
 	; Clear hole to ground
 	pop h ; [HL] = furthest tile address (the hole)
-	mvi m, 0
-	inx h
-	mov a, m
-	ani ~TileIndexMask
-	ori NeedsRedrawMask
-	mov m, a
+	mvi m, TileEmpty_Index | NeedsRedrawMask
 
 	push d ; [TOS] = closest tile pos (restore the position stack)
 
@@ -227,7 +206,6 @@ PlayerMove:
 .notDirectionChangeSentinel:
 	call TileAddressFromPos
 
-	inx h
 	mov a, m ; Get tile index
 	ani TileIndexMask
 	xri TileRightArrow_Index
@@ -306,17 +284,6 @@ PlayerMove:
 	call TileAddressFromPos ; [HL] = addr of furthest
 
 	; Write from closest pos [BC] to furthest pos [HL]
-	mov a, m
-	ani GroundTileIndexMask
-	mov d, a ; [D] = preserved ground tile index from furthest pos
-
-	ldax b
-	ani ~GroundTileIndexMask
-	ora d ; This
-	mov m, a
-	inx b
-	inx h
-
 	ldax b
 	ori NeedsRedrawMask
 	mov m, a
@@ -332,11 +299,7 @@ PlayerMove:
 	; [DE] = original player position before the move
 	; Clear foreground tile on the starting position, the player just moved away from this tile.
 	call TileAddressFromPos ; [HL] = addr of closest
-	inx h
-	mov a, m
-	ani ~TileIndexMask
-	ori NeedsRedrawMask
-	mov m, a
+	mvi m, TileEmpty_Index | NeedsRedrawMask
 
 	ora a ; clear carry bit to indicate that the move was performed successfully
 	ret
@@ -425,32 +388,24 @@ GameInit:
 	call Draw
 	ret
 
-TileOffsetFromPos:
+TileAddressFromPos:
 ; [D] = X pos (0 - 23)
 ; [E] = Y pos (0 - 7)
-; -> [BC] = tile offset
-; Clobbers [A] [BC]
+; -> [HL] = tile address
+	lxi h, Level.TileData
 	mov a, d
 	add a
 	add a
 	add a ; + X*8
 	add e ; + Y
-	add a ; * 2
-	mov c, a
-	mvi a, 0
-	adc a
-	mov b, a
-	ret
 
-TileAddressFromPos:
-; [D] = X pos (0 - 23)
-; [E] = Y pos (0 - 7)
-; -> [HL] = tile address
-	push b
-	call TileOffsetFromPos
-	lxi h, Level.TileData
-	dad b
-	pop b
+	; [A] = Tile Offset
+
+	add l
+	mov l, a
+	mvi a, 0
+	adc h
+	mov h, a
 	ret
 
 TileDataFromPos:
@@ -474,20 +429,14 @@ Draw:
 	mvi e, 0 ; [E] = Y = 0
 .drawLevelCols:
 
-	mov b, m ; Tile attrib + ground tile index
-	inx h
-	mov a, m ; tile index + redraw flag
+	mov a, m ; [A] Tile Info
 	rlc
-	jc .needsRedraw
-	inx h ; Skip to next tile
-	jmp .continue
-.needsRedraw:
+	rlc
+	jnc .continue
+
+	rrc
 	rrc
 	ani TileIndexMask
-	jnz .skipGroundTileImage
-	mov a, b
-	ani GroundTileIndexMask
-.skipGroundTileImage:
 
 	push h ; Save level offset
 	  call TilePtrFromIndex
@@ -504,11 +453,12 @@ Draw:
 	pop h ; restore level offset
 
 .clearRedrawFlag:
+	mov a, m
 	ani ~NeedsRedrawMask & 0xff
 	mov m, a
-	inx h
 
 .continue:
+	inx h
 	inr e ; next Y
 	mov a, e
 	cpi 8
@@ -784,8 +734,12 @@ PlayerMoveDir: ds 1
 KeyboardRow6Down: ds 1
 KeyboardRow6Pressed: ds 1
 
+ align 8 ; Force 8 byte alignment of .TileData;
+         ; This eneables us to translate easily between
+         ; Y coordinates and the 3 least significant
+         ; bits of the tile address.
 Level:
+.TileData: ds 8*24
 .PlayerStartY: ds 1
 .PlayerStartX: ds 1
-.TileData: ds 8*24*2
 LevelEnd:

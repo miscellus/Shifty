@@ -11,8 +11,7 @@ from itertools import islice
 
 LEVEL_WIDTH = 24
 LEVEL_HEIGHT = 8
-_BYTES_PER_LINE = 12
-_WORDS_PER_LINE = 8  # emit 8 words (16 bytes) per 'dw' line for readability
+_BYTES_PER_LINE = 8
 
 @dataclass(frozen=True)
 class TileDef:
@@ -78,7 +77,7 @@ def parse_input_with_tagmap(path: Path) -> Tuple[Dict[str, TileDef], Dict[str, i
     mappings: Dict[str, TileDef] = {}
     tag_to_attr: Dict[str, int] = {
         "pushable"        : 1 << 7,
-        "needsRedraw"     : 1 << 15,
+        "needsRedraw"     : 1 << 6,
     }
     levels: List[Level] = []
 
@@ -149,19 +148,18 @@ def _emit_db_bytes(out: List[str], label: Optional[str], bytes_seq: List[int]) -
         chunk = bytes_seq[i : i + _BYTES_PER_LINE]
         out.append("    db " + ", ".join(f"0b{b:08b}" for b in chunk))
 
-def _emit_dw_words(out: List[str], label: Optional[str], words: List[int]) -> None:
+def emit_level_defines(out: List[str], label: Optional[str], bytes: List[int]) -> None:
     """
-    Emit a label (if provided) then the words in column-major order using 'dw'.
-    Each word is formatted as 0xNNNN. Emits WORDS_PER_LINE per line.
+    Emit a label (if provided) then the bytes in column-major order using 'db'.
     """
     if label:
         out.append(f"{label}:")
-    for i in range(0, len(words), _WORDS_PER_LINE):
-        chunk = words[i : i + _WORDS_PER_LINE]
-        out.append("    dw " + ", ".join(f"0x{w:04x}" for w in chunk))
+    for i in range(0, len(bytes), _BYTES_PER_LINE):
+        chunk = bytes[i : i + _BYTES_PER_LINE]
+        out.append("    db " + ", ".join(f"0b{b:08b}" for b in chunk))
 
 # --- new tile-word computation ---
-def compute_tile_word(td: TileDef, tag_to_attr: Dict[str, int]) -> int:
+def compute_tile_info(td: TileDef, tag_to_attr: Dict[str, int]) -> int:
     r"""
     Compute a 16-bit tile word for one tile definition according to the bitfield:
 
@@ -186,37 +184,28 @@ def compute_tile_word(td: TileDef, tag_to_attr: Dict[str, int]) -> int:
 
     """
 
-    word = 0
 
     if td.index is None:
         raise RuntimeError(f"missing asm index for tile {td.name}")
 
-    # groundTileImage bits 0-1 and tileImage bits 8-11
-    if 0 <= td.index <= 3:
-        ground = td.index
-        tile_image = 0
-    elif 0 <= td.index <= 15:
-        ground = 0
-        tile_image = td.index
-    else:
+    if td.index != (td.index & 0b00011111):
         raise RuntimeError(f"asm index {td.index} out of bounds for {td.name}")
 
-    word |= ground  # bits 0-1
-    word |= (tile_image & 0xF) << 8
+    tile_info = td.index
 
     for tag in td.tags:
         attr = tag_to_attr.get(tag, 0)
-        word |= attr
+        tile_info |= attr
 
     # Final bounds check
-    if not (0 <= word <= 0xFFFF):
-        raise RuntimeError(f"computed tile word out of 16-bit range: 0x{word:X}")
-    return word
+    if not (0 <= tile_info <= 0xFF):
+        raise RuntimeError(f"computed tile info out of 8-bit range: 0x{tile_info:X}")
+    return tile_info
 
-def level_to_column_major_words(lvl: Level, mappings: Dict[str, TileDef], tag_to_attr: Dict[str, int]) -> List[int]:
+def level_to_column_major_tile_infos(lvl: Level, mappings: Dict[str, TileDef], tag_to_attr: Dict[str, int]) -> List[int]:
     """
-    Produce a single column-major sequence of 16-bit words for the level,
-    using compute_tile_word for each tile in the grid.
+    Produce a single column-major sequence of tile info bytes for the level,
+    using compute_tile_info for each tile in the grid.
     Column-major ordering is preserved (x outer, y inner).
     """
     seq: List[int] = []
@@ -225,8 +214,8 @@ def level_to_column_major_words(lvl: Level, mappings: Dict[str, TileDef], tag_to
             td = mappings[lvl.grid[y][x].char]
             if td.index is None:
                 raise RuntimeError(f"missing asm index for tile {td.name}")
-            word = compute_tile_word(td, tag_to_attr)
-            seq.append(word)
+            tile_info = compute_tile_info(td, tag_to_attr)
+            seq.append(tile_info)
     return seq
 
 def find_player_start(lvl: Level) -> Optional[Tuple[int, int]]:
@@ -255,6 +244,14 @@ def main() -> None:
         out.append(";-------------------------------------------------------------------------------")
         out.append(f"{label}:")
         out.append(";-------------------------------------------------------------------------------")
+
+        # produce single column-major block of tile info bytes
+        tile_infos = level_to_column_major_tile_infos(lvl, mappings, tag_to_attr)
+
+        # Emit a readable dw block label (use .TileData suffix)
+        emit_level_defines(out, ".TileData", tile_infos)
+        out.append("")  # blank between levels
+
         # player start (if any) - same naming convention but tied to sanitized label
         ps = find_player_start(lvl)
         if ps:
@@ -262,13 +259,6 @@ def main() -> None:
             out.append(f".PlayerStartY: db {y}")
             out.append(f".PlayerStartX: db {x}")
             out.append("")  # blank
-
-        # produce single 16-bit-per-tile column-major block
-        words = level_to_column_major_words(lvl, mappings, tag_to_attr)
-
-        # Emit a readable dw block label (use .TileData suffix)
-        _emit_dw_words(out, ".TileData", words)
-        out.append("")  # blank between levels
 
     args.output.write_text("\n".join(out), encoding="utf-8")
 
