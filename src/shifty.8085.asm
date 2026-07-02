@@ -4,8 +4,7 @@
 ;
 ; byte 0 (little endian)
 GroundTileIndexMask equ 0b00000011 ; bits 0-2 of tile word
-PushableMask        equ 0b01000000 ; bit 6 of tile word
-SolidMask           equ 0b10000000 ; bit 7 of tile word
+PushableMask        equ 0b10000000 ; bit 7 of tile word
 
 ; byte 1 (little endian)
 NeedsRedrawMask     equ 0b10000000 ; bit 15 of tile word
@@ -108,23 +107,24 @@ PlayerMove:
 	call TileAddressFromPos
 	mov a, m
 
-	; Check for solid
-	rlc ; [CF] = 1 means solid [CF] = 0 means not solid
-	jc .foundSolid
-
 	; Check for pushables
-	rlc ; [CF] = 1 means pushable, 0 means empty in this case because it was not solid
-	jc .foundPushable
+	cpi PushableMask
+	jnc .foundPushable
 
 	; Check for hole
-	ani GroundTileIndexMask << 2 ; because of previous two RLC instructions
-	cpi TileHole_Index << 2
+	ani GroundTileIndexMask ; because of previous two RLC instructions
+	cpi TileHole_Index
 	jz .foundHole
 
-	; Block the move if search has looped around and is trying to push into current player position
 	inx h
 	mov a, m
 	ani TileIndexMask
+
+	; Check for wall
+	cpi TileWallBrick_Index
+	jz .foundSolid
+
+	; Block the move if search has looped around and is trying to push into current player position
 	xri TileBoxKidRight_Index
 	cpi 4
 	jc .foundSolid

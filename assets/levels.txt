@@ -1,5 +1,5 @@
 . = TileEmpty
-# = TileWallBrick #solid
+# = TileWallBrick
 @ = TileBoxKidDown #player
 s = TileCrateStone #pushable
 h = TileHole

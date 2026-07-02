@@ -77,8 +77,7 @@ def parse_input_with_tagmap(path: Path) -> Tuple[Dict[str, TileDef], Dict[str, i
     """
     mappings: Dict[str, TileDef] = {}
     tag_to_attr: Dict[str, int] = {
-        "solid"           : 1 << 7,
-        "pushable"        : 1 << 6,
+        "pushable"        : 1 << 7,
         "needsRedraw"     : 1 << 15,
     }
     levels: List[Level] = []
@@ -163,7 +162,7 @@ def _emit_dw_words(out: List[str], label: Optional[str], words: List[int]) -> No
 
 # --- new tile-word computation ---
 def compute_tile_word(td: TileDef, tag_to_attr: Dict[str, int]) -> int:
-    """
+    r"""
     Compute a 16-bit tile word for one tile definition according to the bitfield:
 
       Bits 0–1  (2 bits): groundTileImage        // what to draw when tile image is 0
@@ -173,6 +172,17 @@ def compute_tile_word(td: TileDef, tag_to_attr: Dict[str, int]) -> int:
       Bits 8–11 (4 bits): tileImageIndex         // primary tile image index (0–15)
       Bits 12–14(3 bits): reserved2
       Bit 15    (1 bit) : needsRedraw            // dirty bit (not set by tags by default)
+
+
+    Old:
+    SP....GG
+    D...IIII
+
+    New:
+    PD.IIIII
+    || \\\\\\__TileIndex___
+    |\_________NeedsRedraw_
+    \__________Pushable____
 
     """
 
