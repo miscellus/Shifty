@@ -1,7 +1,16 @@
-TileIndexMask       equ 0b00001111 ; bits 8-11 of tile word
+
+;
+; How tiles are stored in the loaded level:
+;
+; byte 0 (little endian)
 GroundTileIndexMask equ 0b00000011 ; bits 0-2 of tile word
+PushableMask        equ 0b01000000 ; bit 6 of tile word
+SolidMask           equ 0b10000000 ; bit 7 of tile word
+
+; byte 1 (little endian)
 NeedsRedrawMask     equ 0b10000000 ; bit 15 of tile word
-ClosedForSearchMask equ 0b01000000 ; bit 5 of tile word
+TileIndexMask       equ 0b00001111 ; bits 8-11 of tile word
+
 
 ; Direction encoding:
 ; bit 0: Axis (0: X, 1: Y)
@@ -82,13 +91,11 @@ PlayerMove:
 ; [C] = Direction (0 -> right, 1 -> up, 2 -> right, 3 -> down)
 ; This procedure pushes the pushable positions to the stack
 ; -> [A] = the number of positions pushed to the stack
+	; xra a
+	; sta PlayerMoveStoneStackIndex
+
 	lhld PlayerPos
 	xchg ; [D] = x, [E] = y
-
-	call TileAddressFromPos
-	mov a, m
-	ori ClosedForSearchMask
-	mov m, a
 
 	push d ; push our initial position
 	mvi b, 1 ; our initial position count is 1
@@ -105,9 +112,6 @@ PlayerMove:
 	rlc ; [CF] = 1 means solid [CF] = 0 means not solid
 	jc .foundSolid
 
-	rlc ; [CF] = 1 means "closed for search", i.e. we already searched that tile
-	jc .foundSolid
-
 	; Check for pushables
 	rlc ; [CF] = 1 means pushable, 0 means empty in this case because it was not solid
 	jc .foundPushable
@@ -116,6 +120,14 @@ PlayerMove:
 	ani GroundTileIndexMask << 2 ; because of previous two RLC instructions
 	cpi TileHole_Index << 2
 	jz .foundHole
+
+	; Block the move if search has looped around and is trying to push into current player position
+	inx h
+	mov a, m
+	ani TileIndexMask
+	xri TileBoxKidRight_Index
+	cpi 4
+	jc .foundSolid
 
 	; Assume we found empty
 	jmp .performMove
@@ -172,14 +184,18 @@ PlayerMove:
 
 .foundPushable:
 	; it's a pushable, so push it (^;
-	; rrc
-	; rrc
-	; rrc
-	; ori ClosedForSearchMask
-	; mov m, a
 	push d
 	inr b ; increment position count
 
+	; ; If the pushable is a stone, then store the stack index of the stone
+	; ; This stack index will be used when we encounter a hole.
+	; inx h
+	; mov a, m
+	; ani TileIndexMask
+	; cpi TileCrateStone_Index
+	; jnz .loop
+	;   mov a, b
+	;   sta PlayerMoveStoneStackIndex
 	jmp .loop
 
 .foundSolid:
@@ -260,7 +276,6 @@ PlayerMove:
 	ret
 
 .performMove:
-	call ClearClosedForSearch
 	; Check if we are moving the player this iteration (B=1).
 	; If B=1, DE currently holds the target coordinates for the player.
 	mov a, b
@@ -324,29 +339,6 @@ PlayerMove:
 	mov m, a
 
 	ora a ; clear carry bit to indicate that the move was performed successfully
-	ret
-
-ClearClosedForSearch:
-	push h
-	push b
-	lxi h, Level
-	mvi b, 24*8
-.loop:
-	mov a, m
-	ani ~ClosedForSearchMask
-	mov m, a
-	inx h
-	inx h
-	dcr b
-	jnz .loop
-	pop b
-	pop h
-	ret
-
-; nocheckin (debug)
-ReadInput_:
-	mvi c, DirectionRight
-	ora a
 	ret
 
 ReadInput:
@@ -421,7 +413,7 @@ LoadLevel:
 	ret
 
 GameInit:
-	lxi h, Level0_6
+	lxi h, Level_ArrowIntro_2
 	call LoadLevel
 
 	lda Level.PlayerStartX
@@ -787,6 +779,7 @@ PlayerTileY: ds 1
 PlayerTileX: ds 1
 
 PlayerMoveDir: ds 1
+; PlayerMoveStoneStackIndex: ds 1
 
 KeyboardRow6Down: ds 1
 KeyboardRow6Pressed: ds 1
