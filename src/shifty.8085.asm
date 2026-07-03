@@ -1,3 +1,6 @@
+TargetNec equ 1
+; TargetT100 equ 1
+	include "hardware.8085.asm"
 
 ;
 ; How tiles are stored in the loaded level:
@@ -16,10 +19,6 @@ DirectionUp    equ 0b01
 DirectionLeft  equ 0b10
 DirectionDown  equ 0b11
 
-TargetNec equ 1
-; TargetT100 equ 1
-	include "hardware.8085.asm"
-
 	org MapRamBase
 GameStart:
 	call GameInit
@@ -36,6 +35,93 @@ GameLoop:
 
 	call Draw
 	jmp GameLoop
+
+
+TryGetNeigborAddr:
+; [A] = direction
+; [HL] = address
+
+	rrc
+	jc .axisY
+.axisX:
+	rrc
+	mov a, l
+	jc .positiveX
+.negativeX:
+	sui low(Level)
+	cpi 8
+	rc ; [CY] = 1: Subtracting 8 would underflow
+	mov a, l
+	sui 8
+	mov l, a
+	mvi a, 0
+	sbb h
+	mov h, a
+	ora a
+	ret
+
+.positiveX:
+	sui low(Level)
+	cpi 8*23
+	rc
+
+
+
+.axisY:
+	rrc
+	jc .positiveY
+.positiveY:
+
+.right:
+	cpi DirectionRight
+	jnz .up
+	mov a, l
+	adi 8
+	mov l, a
+	mvi a, 0
+	adc h
+
+	cpi low(LevelEnd)
+	jnc .outOfBounds
+	mov l, a
+	ora a ; clear carry
+	ret
+
+.up:
+	cpi DirectionUp
+	jnz .left
+	mov a, l
+	ani 7
+	jz .outOfBounds
+	dcr l
+	ret
+
+.left:
+	cpi DirectionLeft
+	jnz .down
+	mov a, l
+	cpi low(Level) + 7
+	rc
+	sbi 8
+	mov l, a
+	ret
+
+.down:
+	cpi DirectionDown
+	jnz .outOfBounds
+	mov a, l
+	ori 0b11111000
+	inr a
+	jz .outOfBounds
+	inr l
+	ret
+.outOfBounds:
+	stc
+	ret
+
+
+IsAddrOutOfBounds:
+
 
 
 TryGetNeigborPos:
@@ -352,37 +438,79 @@ ReadInput:
 	ret
 
 LoadLevel:
-; [HL] = pointer to level
+; [HL] = pointer to compressed level data
 ; Clobbers [A]
-; TODO(jkk): add compression and decompression
+; Returns: Level buffer filled, PlayerStartY/X set
 	push b
+	push d
 	push h
 
-	lxi b, Level
-.loop:
+	lxi b, Level ; [BC] = Destination pointer for RAM buffer
+
+; Compressed byte format: CCC TTTTT
+; CCC = run length 1 - 8 (000 maps to 1, 111 maps to 8)
+; TTTTT = tile index
+.readCompressed:
 	mov a, m
-	stax b
 	inx h
-	inx b
+	mov d, a ; [D] = compressed packet
+
+	ani 0x1f ; [A] = tile index 0-31
+
+	; Lookup in tile lookup table that maps tile index to tile index + attributes
+	push h ; Save read ptr
+	  lxi h, TileInfoFromTileIndexMap
+	  add l
+	  mov l, a
+	  mvi a, 0
+	  adc h
+	  mov h, a ; [HL] = &TileInfoFromTileIndexMap[TileID]
+	  mov e, m ; [E] = Decompressed tile info
+	pop h ; Restore read ptr
+
+	mov a, d
+	rlc
+	rlc
+	rlc
+	ani 7
+	inr a
+	mov d, a ; [D] = run count (1 to 8)
+
+.writeRun:
+	mov a, e
+	stax b ; Write tile info to loaded level buffer
+	inx b ; Advance write ptr
+	dcr d
+	jnz .writeRun
+
+	; Check if we are done decompressing the level data
 	mov a, b
 	cpi high(LevelEnd)
-	jnz .loop
+	jnz .readCompressed
 	mov a, c
 	cpi low(LevelEnd)
-	jnz .loop
+	jnz .readCompressed
+
+	; [HL] = uncompressed player coordinates
+	mov a, m
+	sta PlayerStartY
+	inx h
+	mov a, m
+	sta PlayerStartX
 
 	pop h
+	pop d
 	pop b
 	ret
 
 GameInit:
-	lxi h, Level_ArrowIntro_2
+	lxi h, Level_ArrowIntro_0
 	call LoadLevel
 
-	lda Level.PlayerStartX
+	lda PlayerStartX
 	sta PlayerTileX
 
-	lda Level.PlayerStartY
+	lda PlayerStartY
 	sta PlayerTileY
 
 	call Draw
@@ -392,7 +520,7 @@ TileAddressFromPos:
 ; [D] = X pos (0 - 23)
 ; [E] = Y pos (0 - 7)
 ; -> [HL] = tile address
-	lxi h, Level.TileData
+	lxi h, Level
 	mov a, d
 	add a
 	add a
@@ -423,7 +551,7 @@ TileDataFromPos:
 
 Draw:
 	call SetInterruptMask_1d
-	lxi h, Level.TileData
+	lxi h, Level
 	mvi d, 0 ; [D] = X = 0
 .drawLevelRows:
 	mvi e, 0 ; [E] = Y = 0
@@ -734,12 +862,13 @@ PlayerMoveDir: ds 1
 KeyboardRow6Down: ds 1
 KeyboardRow6Pressed: ds 1
 
- align 8 ; Force 8 byte alignment of .TileData;
-         ; This eneables us to translate easily between
-         ; Y coordinates and the 3 least significant
-         ; bits of the tile address.
-Level:
-.TileData: ds 8*24
-.PlayerStartY: ds 1
-.PlayerStartX: ds 1
-LevelEnd:
+PlayerStartY: ds 1
+PlayerStartX: ds 1
+
+; Align level to 256 offset
+; This eneables us to translate easily between
+; Y coordinates and the 3 least significant
+; bits of the tile address.
+Level equ ($ + 0xff) & 0xff00
+LevelEnd equ Level + 8*24
+

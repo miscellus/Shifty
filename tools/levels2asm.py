@@ -1,266 +1,161 @@
 #!/usr/bin/env python3
-from __future__ import annotations
 import argparse
 import re
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Callable
-import sys
-import warnings
-from itertools import islice
 
-LEVEL_WIDTH = 24
-LEVEL_HEIGHT = 8
-_BYTES_PER_LINE = 8
-
-@dataclass(frozen=True)
-class TileDef:
-    char: str
-    name: str
-    tags: List[str]
-    index: Optional[int] = None
-
-@dataclass
-class Tile:
-    char: str
-    definition: TileDef
-
-@dataclass
-class Level:
-    name: str
-    width: int
-    height: int
-    grid: List[List[Tile]]  # grid[y][x]
-
-# regexes
-_asm_index_re = re.compile(r'^(?P<label>\w+)_Index\s+equ\s+(?P<idx>\d+)', re.IGNORECASE)
-_mapping_line_re = re.compile(r'^(?P<char>.?)\s*=\s*(?P<name>\w+)(?P<rest>.*)$')
-_tag_map_re = re.compile(r'^(?P<tag>#?\w+)\s*=\s*(?P<val>0x[0-9A-Fa-f]+|\d+)\s*$')
-
-def parse_asm_indices(path: Path) -> Dict[str, int]:
-    indices: Dict[str, int] = {}
-    for ln in path.read_text(encoding="utf-8").splitlines():
-        m = _asm_index_re.match(ln.strip())
-        if m:
-            indices[m.group("label")] = int(m.group("idx"))
-    return indices
-
-def parse_mapping_line(line: str) -> TileDef:
-    m = _mapping_line_re.match(line)
-    if not m:
-        raise ValueError(f"invalid mapping line: {line!r}")
-    ch = m.group("char")
-    if len(ch) != 1:
-        raise ValueError(f"mapping key must be a single character: {line!r}")
-    name = m.group("name")
-    tags = [t.lstrip("#") for t in m.group("rest").split() if t.startswith("#")]
-    tags.append("needsRedraw")
-    return TileDef(char=ch, name=name, tags=tags)
-
-def nice_lines(path: Path):
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            comment_index = line.rfind(';')
-            if comment_index >= 0:
-                line = line[:comment_index]
-            yield line
-    yield None
-
-def parse_input_with_tagmap(path: Path) -> Tuple[Dict[str, TileDef], Dict[str, int], List[Level]]:
-    """
-    Parse input file. Sections:
-      - character mappings (lines like ". = TileEmpty #bg")
-      - an optional tag->attribute mapping block (lines like: solid = 0x04)
-      - levels (name line, then 8 rows of 24 chars)
-    """
-    mappings: Dict[str, TileDef] = {}
-    tag_to_attr: Dict[str, int] = {
-        "pushable"        : 1 << 7,
-        "needsRedraw"     : 1 << 6,
-    }
-    levels: List[Level] = []
-
-    lines = nice_lines(path)
-    line = ""
-
-    for line in lines:
-        if line is None:
-            raise ValueError(f"unexpected EOF while reading level '{level_name}'")
-        if not line:
-            break
-        # if '=' not in line:
-        #     continue
-        td = parse_mapping_line(line)
-        if td.char in mappings:
-            raise ValueError(f"duplicate mapping for character {td.char!r}")
-        mappings[td.char] = td
-
-    while True:
-        line = next(lines)
-        if line is None:
-            break
-        if len(line) == 0:
-            continue
-
-        level_name = _sanitize_label(line)
-        rows: List[List[Tile]] = []
-        for row in islice(lines, 8):
-            if row is None:
-                raise ValueError(f"unexpected EOF while reading level '{level_name}', row {row_index}")
-
-            if len(row) != LEVEL_WIDTH:
-                raise ValueError(f"level '{level_name}' row {row_index} has length {len(row)} (expected {LEVEL_WIDTH})")
-
-            for c in row:
-                if c not in mappings:
-                    raise ValueError(f"level '{level_name}' references unknown tile character {c!r}")
-
-            rows.append([Tile(char=c, definition=mappings[c]) for c in row])
-
-        levels.append(Level(name=level_name, width=LEVEL_WIDTH, height=LEVEL_HEIGHT, grid=rows))
-
-    return mappings, tag_to_attr, levels
-
-def attach_indices(mappings: Dict[str, TileDef], asm_indices: Dict[str, int], levels: List[Level]) -> None:
-    # ensure every used tile name is present in asm_indices
-    used_names: Set[str] = set()
-    for lvl in levels:
-        for row in lvl.grid:
-            for t in row:
-                used_names.add(t.definition.name)
-    missing = [n for n in used_names if n not in asm_indices]
-    if missing:
-        raise ValueError(f"tiles referenced in levels but missing from tiles ASM: {', '.join(sorted(missing))}")
-    # attach indices
-    for ch, td in list(mappings.items()):
-        idx = asm_indices.get(td.name)
-        mappings[ch] = TileDef(char=td.char, name=td.name, tags=td.tags, index=idx)
-
-# --- emit helpers ---
-def _sanitize_label(name: str) -> str:
-    return re.sub(r'[^0-9A-Za-z_]', '_', name)
-
-def _emit_db_bytes(out: List[str], label: Optional[str], bytes_seq: List[int]) -> None:
-    if label:
-        out.append(f"{label}:")
-    for i in range(0, len(bytes_seq), _BYTES_PER_LINE):
-        chunk = bytes_seq[i : i + _BYTES_PER_LINE]
-        out.append("    db " + ", ".join(f"0b{b:08b}" for b in chunk))
-
-def emit_level_defines(out: List[str], label: Optional[str], bytes: List[int]) -> None:
-    """
-    Emit a label (if provided) then the bytes in column-major order using 'db'.
-    """
-    if label:
-        out.append(f"{label}:")
-    for i in range(0, len(bytes), _BYTES_PER_LINE):
-        chunk = bytes[i : i + _BYTES_PER_LINE]
-        out.append("    db " + ", ".join(f"0b{b:08b}" for b in chunk))
-
-# --- new tile-word computation ---
-def compute_tile_info(td: TileDef, tag_to_attr: Dict[str, int]) -> int:
-    r"""
-    Compute a 16-bit tile word for one tile definition according to the bitfield:
-
-      Bits 0–1  (2 bits): groundTileImage        // what to draw when tile image is 0
-      Bits 2–5  (4 bits): reserved1
-      Bit 6     (1 bit) : isPushable
-      Bit 7     (1 bit) : isSolid
-      Bits 8–11 (4 bits): tileImageIndex         // primary tile image index (0–15)
-      Bits 12–14(3 bits): reserved2
-      Bit 15    (1 bit) : needsRedraw            // dirty bit (not set by tags by default)
-
-
-    Old:
-    SP....GG
-    D...IIII
-
-    New:
-    PD.IIIII
-    || \\\\\\__TileIndex___
-    |\_________NeedsRedraw_
-    \__________Pushable____
-
-    """
-
-
-    if td.index is None:
-        raise RuntimeError(f"missing asm index for tile {td.name}")
-
-    if td.index != (td.index & 0b00011111):
-        raise RuntimeError(f"asm index {td.index} out of bounds for {td.name}")
-
-    tile_info = td.index
-
-    for tag in td.tags:
-        attr = tag_to_attr.get(tag, 0)
-        tile_info |= attr
-
-    # Final bounds check
-    if not (0 <= tile_info <= 0xFF):
-        raise RuntimeError(f"computed tile info out of 8-bit range: 0x{tile_info:X}")
-    return tile_info
-
-def level_to_column_major_tile_infos(lvl: Level, mappings: Dict[str, TileDef], tag_to_attr: Dict[str, int]) -> List[int]:
-    """
-    Produce a single column-major sequence of tile info bytes for the level,
-    using compute_tile_info for each tile in the grid.
-    Column-major ordering is preserved (x outer, y inner).
-    """
-    seq: List[int] = []
-    for x in range(lvl.width):
-        for y in range(lvl.height):
-            td = mappings[lvl.grid[y][x].char]
-            if td.index is None:
-                raise RuntimeError(f"missing asm index for tile {td.name}")
-            tile_info = compute_tile_info(td, tag_to_attr)
-            seq.append(tile_info)
-    return seq
-
-def find_player_start(lvl: Level) -> Optional[Tuple[int, int]]:
-    """Return (x,y) of first tile that has tag 'player', or None."""
-    for y in range(lvl.height):
-        for x in range(lvl.width):
-            if 'player' in lvl.grid[y][x].definition.tags:
-                return x, y
-    return None
-
-# --- main ---
-def main() -> None:
-    p = argparse.ArgumentParser(description="Emit levels as single 16-bit-per-tile assembly block using new tile-word format")
-    p.add_argument("input", type=Path, help="input file (mapping + optional tag->attr block + levels)")
-    p.add_argument("tiles_asm", type=Path, help="tiles assembly file (used only for indices/validation)")
-    p.add_argument("output", type=Path, help="output assembly file to write")
+def main():
+    p = argparse.ArgumentParser(description="Pack levels with RLE compression and generate Tile LUT")
+    p.add_argument("input", type=Path, help="input file (mappings + levels)")
+    p.add_argument("tiles_asm", type=Path, help="tiles assembly file for indices")
+    p.add_argument("output", type=Path, help="output assembly file")
     args = p.parse_args()
 
-    asm_indices = parse_asm_indices(args.tiles_asm)
-    mappings, tag_to_attr, levels = parse_input_with_tagmap(args.input)
-    attach_indices(mappings, asm_indices, levels)
+    # 1. Read ASM Indices
+    asm_indices = {}
+    for line in args.tiles_asm.read_text(encoding="utf-8").splitlines():
+        m = re.match(r'^(\w+)_Index\s+equ\s+(\d+)', line.strip(), re.I)
+        if m:
+            asm_indices[m.group(1)] = int(m.group(2))
 
-    out: List[str] = []
-    for lvl in levels:
-        label = _sanitize_label(lvl.name)
+    # 2. Parse Mappings, Build LUT, and Parse Levels
+    mappings = {}
+    lut = [0] * 32  # 32-byte Lookup Table for the 8085
+    levels = []     # List of tuples: (level_name, list_of_rows)
+
+    raw_lines = args.input.read_text(encoding="utf-8").splitlines()
+    lines = [line.split(';')[0].strip() for line in raw_lines]
+    lines = [line for line in lines if line]
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        if '=' in line:
+            # Parse mapping: . = TileEmpty #pushable #player
+            char, rest = line.split('=', 1)
+            char = char.strip()
+            parts = rest.split()
+            name = parts[0]
+            tags = set(parts[1:])
+
+            if name not in asm_indices:
+                raise ValueError(f"Unknown tile in ASM: {name}")
+
+            tile_id = asm_indices[name]
+            if tile_id > 31:
+                raise ValueError(f"Tile ID {tile_id} exceeds 5-bit limit (max 31)")
+
+            # Populate the 8085 LUT for this tile ID
+            val = tile_id | 0x40                    # Implicit needsRedraw (Bit 6)
+            if '#pushable' in tags:
+                val |= 0x80                         # Pushable flag (Bit 7)
+            lut[tile_id] = val
+
+            # Save mapping for the level parser
+            mappings[char] = {'id': tile_id, 'is_player': '#player' in tags}
+            i += 1
+
+        else:
+            # Parse level header and grid
+            level_name = re.sub(r'[^0-9A-Za-z_]', '_', line)
+            rows = lines[i+1 : i+9]
+
+            if len(rows) < 8 or any(len(r) != 24 for r in rows):
+                raise ValueError(f"Level '{level_name}' grid must be exactly 24x8")
+
+            levels.append((level_name, rows))
+            i += 9 # Skip header + 8 rows
+
+    # 3. Generate Output Assembly
+    out = []
+
+    out.append(";-------------------------------------------------------------------------------")
+    out.append("; This file was generated by tools/levels2asm.py")
+    out.append(";-------------------------------------------------------------------------------")
+    out.append("")
+
+    out.append(";-------------------------------------------------------------------------------")
+    out.append("LevelLookupTable:")
+    out.append("; Maps Level Index -> Pointer to Level Data")
+    out.append(";-------------------------------------------------------------------------------")
+    for idx, (name, _) in enumerate(levels):
+        out.append(f"    dw {name} ; Level {idx}")
+    out.append("")
+
+    # Emit the 32-byte LUT first
+    out.append(";-------------------------------------------------------------------------------")
+    out.append("TileInfoFromTileIndexMap:")
+    out.append("; Pre-baked RAM bytes: [Pushable][Dirty][0][TileID 0-4]")
+    out.append(";-------------------------------------------------------------------------------")
+    for j in range(0, 32, 12):
+        chunk = lut[j:j+12]
+        out.append("    db " + ", ".join(f"0x{b:02x}" for b in chunk))
+    out.append("")
+
+    # Process and compress each level
+    for name, rows in levels:
         out.append(";-------------------------------------------------------------------------------")
-        out.append(f"{label}:")
+        out.append(f"{name}:")
         out.append(";-------------------------------------------------------------------------------")
+        out.append(".TileData:")
 
-        # produce single column-major block of tile info bytes
-        tile_infos = level_to_column_major_tile_infos(lvl, mappings, tag_to_attr)
+        compressed_bytes = []
+        px, py = None, None
 
-        # Emit a readable dw block label (use .TileData suffix)
-        emit_level_defines(out, ".TileData", tile_infos)
-        out.append("")  # blank between levels
+        current_id = None
+        run_count = 0
 
-        # player start (if any) - same naming convention but tied to sanitized label
-        ps = find_player_start(lvl)
-        if ps:
-            x, y = ps
-            out.append(f".PlayerStartY: db {y}")
-            out.append(f".PlayerStartX: db {x}")
-            out.append("")  # blank
+        # Helper to pack and emit the current run
+        def flush_run():
+            if run_count > 0:
+                # Top 3 bits: (count - 1), Bottom 5 bits: Tile ID
+                packed_byte = ((run_count - 1) << 5) | current_id
+                compressed_bytes.append(packed_byte)
 
+        # Traverse Column-Major (x outer, y inner)
+        for x in range(24):
+            for y in range(8):
+                char = rows[y][x]
+                if char not in mappings:
+                    raise ValueError(f"Unknown char '{char}' in level '{name}'")
+
+                tile = mappings[char]
+                tile_id = tile['id']
+
+                if tile['is_player']:
+                    px, py = x, y
+
+                # RLE Logic: Match found and count is under 8
+                if current_id == tile_id and run_count < 8:
+                    run_count += 1
+                else:
+                    # Tile changed OR hit the 8-tile limit, flush and start new run
+                    flush_run()
+                    current_id = tile_id
+                    run_count = 1
+
+        # Flush the very last run at the end of the level
+        flush_run()
+
+        # Emit compressed bytes in readable chunks
+        for j in range(0, len(compressed_bytes), 12):
+            chunk = compressed_bytes[j:j+12]
+            out.append("    db " + ", ".join(f"0x{b:02x}" for b in chunk))
+
+        out.append("")
+        if px is not None:
+            out.append(f".PlayerStartY: db {py}")
+            out.append(f".PlayerStartX: db {px}")
+        out.append("")
+
+    # Write to disk
     args.output.write_text("\n".join(out), encoding="utf-8")
+
+    # Calculate savings
+    raw_size = len(levels) * 24 * 8
+    compressed_size = sum(len(lvl_bytes) for _, lvl_bytes in [(n, out) for n in out if "db 0b" in n]) # Rough string estimation
+    print(f"Successfully packed {len(levels)} levels.")
+    print(f"Total LUT size: 32 bytes.")
 
 if __name__ == "__main__":
     main()
