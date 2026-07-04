@@ -19,7 +19,14 @@ def main():
 
     # 2. Parse Mappings, Build LUT, and Parse Levels
     mappings = {}
-    lut = [0] * 32  # 32-byte Lookup Table for the 8085
+
+    flag_needs_redraw = 0x40
+    flag_pushable = 0x80
+
+    tile_lut = [{
+        "info": tile_index | flag_needs_redraw,
+        "name": ""
+    } for tile_index in range(32)]  # 32-byte Lookup Table for the 8085
     levels = []     # List of tuples: (level_name, list_of_rows)
 
     raw_lines = args.input.read_text(encoding="utf-8").splitlines()
@@ -46,10 +53,9 @@ def main():
                 raise ValueError(f"Tile ID {tile_id} exceeds 5-bit limit (max 31)")
 
             # Populate the 8085 LUT for this tile ID
-            val = tile_id | 0x40                    # Implicit needsRedraw (Bit 6)
+            tile_lut[tile_id]["name"] = name;
             if '#pushable' in tags:
-                val |= 0x80                         # Pushable flag (Bit 7)
-            lut[tile_id] = val
+                tile_lut[tile_id]["info"] |= flag_pushable
 
             # Save mapping for the level parser
             mappings[char] = {'id': tile_id, 'is_player': '#player' in tags}
@@ -87,9 +93,8 @@ def main():
     out.append("TileInfoFromTileIndexMap:")
     out.append("; Pre-baked RAM bytes: [Pushable][Dirty][0][TileID 0-4]")
     out.append(";-------------------------------------------------------------------------------")
-    for j in range(0, 32, 12):
-        chunk = lut[j:j+12]
-        out.append("    db " + ", ".join(f"0x{b:02x}" for b in chunk))
+    for tile in tile_lut:
+        out.append(f"    db 0b{tile["info"]:08b} ; {tile["name"]}")
     out.append("")
 
     # Process and compress each level

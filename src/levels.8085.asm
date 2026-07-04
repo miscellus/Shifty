@@ -18,9 +18,38 @@ LevelLookupTable:
 TileInfoFromTileIndexMap:
 ; Pre-baked RAM bytes: [Pushable][Dirty][0][TileID 0-4]
 ;-------------------------------------------------------------------------------
-    db 0x40, 0x41, 0x00, 0x43, 0xc4, 0xc5, 0xc6, 0xc7, 0x00, 0x00, 0x00, 0x4b
-    db 0xcc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-    db 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    db 0b01000000 ; TileEmpty
+    db 0b01000001 ; TileHole
+    db 0b01000010 ;
+    db 0b01000011 ; TileWallBrick
+    db 0b11000100 ; TileRightArrow
+    db 0b11000101 ; TileUpArrow
+    db 0b11000110 ; TileLeftArrow
+    db 0b11000111 ; TileDownArrow
+    db 0b01001000 ;
+    db 0b01001001 ;
+    db 0b01001010 ;
+    db 0b01001011 ; TileBoxKidDown
+    db 0b11001100 ; TileCrateStone
+    db 0b01001101 ;
+    db 0b01001110 ;
+    db 0b01001111 ;
+    db 0b01010000 ;
+    db 0b01010001 ;
+    db 0b01010010 ;
+    db 0b01010011 ;
+    db 0b01010100 ;
+    db 0b01010101 ;
+    db 0b01010110 ;
+    db 0b01010111 ;
+    db 0b01011000 ;
+    db 0b01011001 ;
+    db 0b01011010 ;
+    db 0b01011011 ;
+    db 0b01011100 ;
+    db 0b01011101 ;
+    db 0b01011110 ;
+    db 0b01011111 ;
 
 ;-------------------------------------------------------------------------------
 Level_ArrowIntro_0:
