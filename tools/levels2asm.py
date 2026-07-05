@@ -147,10 +147,16 @@ def main():
             chunk = compressed_bytes[j:j+12]
             out.append("    db " + ", ".join(f"0x{b:02x}" for b in chunk))
 
+        if px is None or py is None:
+            raise ValueError(f"Player is missing from level {name}")
+
+        player_pos_packed = (px << 3) | py
+
         out.append("")
         if px is not None:
-            out.append(f".PlayerStartY: db {py}")
-            out.append(f".PlayerStartX: db {px}")
+            out.append(f".PlayerPos: db 0o{player_pos_packed:03o}")
+            # out.append(f".PlayerStartY: db {py}")
+            # out.append(f".PlayerStartX: db {px}")
         out.append("")
 
     # Write to disk

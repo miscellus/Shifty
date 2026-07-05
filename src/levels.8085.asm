@@ -20,36 +20,36 @@ TileInfoFromTileIndexMap:
 ;-------------------------------------------------------------------------------
     db 0b01000000 ; TileEmpty
     db 0b01000001 ; TileHole
-    db 0b01000010 ;
+    db 0b01000010 ; 
     db 0b01000011 ; TileWallBrick
     db 0b11000100 ; TileRightArrow
     db 0b11000101 ; TileUpArrow
     db 0b11000110 ; TileLeftArrow
     db 0b11000111 ; TileDownArrow
-    db 0b01001000 ;
-    db 0b01001001 ;
-    db 0b01001010 ;
+    db 0b01001000 ; 
+    db 0b01001001 ; 
+    db 0b01001010 ; 
     db 0b01001011 ; TileBoxKidDown
     db 0b11001100 ; TileCrateStone
-    db 0b01001101 ;
-    db 0b01001110 ;
-    db 0b01001111 ;
-    db 0b01010000 ;
-    db 0b01010001 ;
-    db 0b01010010 ;
-    db 0b01010011 ;
-    db 0b01010100 ;
-    db 0b01010101 ;
-    db 0b01010110 ;
-    db 0b01010111 ;
-    db 0b01011000 ;
-    db 0b01011001 ;
-    db 0b01011010 ;
-    db 0b01011011 ;
-    db 0b01011100 ;
-    db 0b01011101 ;
-    db 0b01011110 ;
-    db 0b01011111 ;
+    db 0b01001101 ; 
+    db 0b01001110 ; 
+    db 0b01001111 ; 
+    db 0b01010000 ; 
+    db 0b01010001 ; 
+    db 0b01010010 ; 
+    db 0b01010011 ; 
+    db 0b01010100 ; 
+    db 0b01010101 ; 
+    db 0b01010110 ; 
+    db 0b01010111 ; 
+    db 0b01011000 ; 
+    db 0b01011001 ; 
+    db 0b01011010 ; 
+    db 0b01011011 ; 
+    db 0b01011100 ; 
+    db 0b01011101 ; 
+    db 0b01011110 ; 
+    db 0b01011111 ; 
 
 ;-------------------------------------------------------------------------------
 Level_ArrowIntro_0:
@@ -61,8 +61,7 @@ Level_ArrowIntro_0:
     db 0x03, 0x05, 0x00, 0x63, 0x00, 0x03, 0x20, 0x63, 0x60, 0xe3, 0xe3, 0xe3
     db 0xe3, 0xe3, 0xe3, 0x23
 
-.PlayerStartY: db 4
-.PlayerStartX: db 7
+.PlayerPos: db 0o074
 
 ;-------------------------------------------------------------------------------
 Level_ArrowIntro_2:
@@ -73,8 +72,7 @@ Level_ArrowIntro_2:
     db 0xe0, 0xe0, 0xe0, 0xe0, 0xe0, 0xe0, 0xe0, 0xe0, 0xe0, 0xe0, 0xe0, 0xe0
     db 0xe0, 0xe0, 0xe0
 
-.PlayerStartY: db 3
-.PlayerStartX: db 1
+.PlayerPos: db 0o013
 
 ;-------------------------------------------------------------------------------
 Level__IDEA:
@@ -90,8 +88,7 @@ Level__IDEA:
     db 0x20, 0x03, 0x00, 0x23, 0x01, 0x03, 0x20, 0x01, 0x20, 0x0c, 0x00, 0x01
     db 0x20, 0xa3, 0x20, 0xa3, 0xe0, 0x00
 
-.PlayerStartY: db 4
-.PlayerStartX: db 2
+.PlayerPos: db 0o024
 
 ;-------------------------------------------------------------------------------
 Level_TestPushables_0:
@@ -104,8 +101,7 @@ Level_TestPushables_0:
     db 0x80, 0x2c, 0x01, 0x80, 0x2c, 0x01, 0x80, 0x2c, 0x01, 0x80, 0x2c, 0x01
     db 0x80, 0x2c, 0x01, 0x80, 0x2c, 0x01, 0xa0, 0x21, 0x20
 
-.PlayerStartY: db 3
-.PlayerStartX: db 0
+.PlayerPos: db 0o003
 
 ;-------------------------------------------------------------------------------
 Level_TestPushables_1:
@@ -117,8 +113,7 @@ Level_TestPushables_1:
     db 0x6c, 0x60, 0x6c, 0x60, 0x6c, 0x60, 0x6c, 0x60, 0x6c, 0x60, 0x6c, 0x60
     db 0x4c, 0x07, 0x6c, 0x06, 0x0c, 0x07, 0xac, 0x06
 
-.PlayerStartY: db 0
-.PlayerStartX: db 1
+.PlayerPos: db 0o010
 
 ;-------------------------------------------------------------------------------
 Level_TestPushables_2:
@@ -130,8 +125,7 @@ Level_TestPushables_2:
     db 0x06, 0xa0, 0x0c, 0x06, 0xa0, 0x07, 0x06, 0xa0, 0x03, 0xe0, 0x00, 0x07
     db 0x40, 0x06, 0x03, 0x20
 
-.PlayerStartY: db 6
-.PlayerStartX: db 8
+.PlayerPos: db 0o106
 
 ;-------------------------------------------------------------------------------
 Level1:
@@ -145,5 +139,4 @@ Level1:
     db 0x00, 0x23, 0x60, 0x04, 0x00, 0x43, 0x40, 0x04, 0x00, 0x43, 0x40, 0x04
     db 0x00, 0x83, 0x00, 0x01, 0x00, 0xe3, 0x03
 
-.PlayerStartY: db 2
-.PlayerStartX: db 11
+.PlayerPos: db 0o132

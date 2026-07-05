@@ -40,131 +40,43 @@ GameLoop:
 TryGetNeigborAddr:
 ; [A] = direction
 ; [HL] = address
+; -> [HL] = neighbor address
+; -> [CY] = (1: out of bounds, 0: address valid)
 
 	rrc
-	jc .axisY
-.axisX:
+	jc .vertical
+
+.horizontal:
 	rrc
 	mov a, l
-	jc .positiveX
-.negativeX:
-	sui low(Level)
-	cpi 8
-	rc ; [CY] = 1: Subtracting 8 would underflow
-	mov a, l
-	sui 8
-	mov l, a
-	mvi a, 0
-	sbb h
-	mov h, a
-	ora a
-	ret
-
-.positiveX:
-	sui low(Level)
-	cpi 8*23
-	rc
-
-
-
-.axisY:
-	rrc
-	jc .positiveY
-.positiveY:
-
+	jc .left
 .right:
-	cpi DirectionRight
-	jnz .up
-	mov a, l
 	adi 8
 	mov l, a
-	mvi a, 0
-	adc h
-
-	cpi low(LevelEnd)
-	jnc .outOfBounds
+	cpi 8*23
+	cmc
+	ret
+.left:
+	sui 8
 	mov l, a
-	ora a ; clear carry
 	ret
 
-.up:
-	cpi DirectionUp
-	jnz .left
+
+.vertical:
+	rrc
 	mov a, l
+	jc .down
+.up:
 	ani 7
-	jz .outOfBounds
+	dcr a
+	rlc
 	dcr l
 	ret
-
-.left:
-	cpi DirectionLeft
-	jnz .down
-	mov a, l
-	cpi low(Level) + 7
-	rc
-	sbi 8
-	mov l, a
-	ret
-
 .down:
-	cpi DirectionDown
-	jnz .outOfBounds
-	mov a, l
-	ori 0b11111000
-	inr a
-	jz .outOfBounds
+	ani 7
+	cpi 7
+	cmc
 	inr l
-	ret
-.outOfBounds:
-	stc
-	ret
-
-
-IsAddrOutOfBounds:
-
-
-
-TryGetNeigborPos:
-; [A] = direction (0-3)
-; [D] = X position
-; [E] = Y position
-; -> [D] = X neighbor position
-; -> [E] = Y neighbor position
-; -> [CF]	= 1 when out of bounds, 0 otherwise
-
-	cpi DirectionRight
-	jnz .skipRight
-	inr d
-	jmp IsPosOutOfBounds
-.skipRight:
-
-	cpi DirectionUp
-	jnz .skipUp
-	dcr e
-	jmp IsPosOutOfBounds
-.skipUp:
-
-	cpi DirectionLeft
-	jnz .skipLeft
-	dcr d
-	jmp IsPosOutOfBounds
-.skipLeft:
-
-	cpi DirectionDown
-	rnz
-	inr e
-	;jmp IsPosOutOfBounds
-
-IsPosOutOfBounds:
-; [D] = X pos
-; [E] = Y pos
-; -> [CF] 1 if out of bounds
-; Clobbers [A]
-	mov a, e ; check y
-	adi -8
-	rc
-	mov a, d ; check x
-	adi -24
 	ret
 
 PlayerMove:
@@ -174,18 +86,19 @@ PlayerMove:
 	; xra a
 	; sta PlayerMoveStoneStackIndex
 
-	lhld PlayerPos
-	xchg ; [D] = x, [E] = y
+	lxi h, Level
+	lda PlayerPos
+	mov l, a
 
-	push d ; push our initial position
+	push h ; push our initial position
 	mvi b, 1 ; our initial position count is 1
 .loop:
 	lda PlayerMoveDir
 	; mov a, c ; [A] = direction
-	call TryGetNeigborPos
+	call TryGetNeigborAddr
 	jc .foundSolid ; return with carry out of bounds and the move should be cancelled
 
-	call TileAddressFromPos
+	; call TileAddressFromPos
 	mov a, m
 
 	; Check for pushables
@@ -221,14 +134,8 @@ PlayerMove:
 	cpi 1
 	jz .cancelMove ; The closest tile must be the player tile (i.e. not a stone), so cancel the move
 
-	; [DE] = furthest tile pos
 	; [HL] = furthest tile address
-
-	xthl ; [TOS] = furthest tile address, [HL] = closest tile pos
-	xchg ; [DE] = closest tile pos, [HL] = furthest tile pos
-
-	; Get address of closest pos
-	call TileAddressFromPos ; [HL] = closest tile address
+	xthl ; [TOS] = furthest tile address, [HL] = closest tile address
 	mov a, m
 	ani TileIndexMask
 	cpi TileCrateStone_Index
@@ -243,13 +150,13 @@ PlayerMove:
 	pop h ; [HL] = furthest tile address (the hole)
 	mvi m, TileEmpty_Index | NeedsRedrawMask
 
-	push d ; [TOS] = closest tile pos (restore the position stack)
+	push h
 
 	jmp .performMove
 
 .foundPushable:
 	; it's a pushable, so push it (^;
-	push d
+	push h
 	inr b ; increment position count
 
 	; ; If the pushable is a stone, then store the stack index of the stone
@@ -277,20 +184,19 @@ PlayerMove:
 	; [B] = the number of places pushed to the stack so far
 	; [SP] = the top of the stack, currently pointing to the last pushed thing
 .perpArrowSearchLoop:
-	pop d
+	pop h
 	dcr b
 	jz .returnMoveBlocked
 
 	; We must check if this is a real position or a search direction change
-	mov a, d
+	mov a, h
 	cpi 0xFF
 	jnz .notDirectionChangeSentinel
-	mov a, e ; [A] = Restored search direction
+	mov a, l ; [A] = Restored search direction
 	sta PlayerMoveDir
 	jmp .perpArrowSearchLoop
 
 .notDirectionChangeSentinel:
-	call TileAddressFromPos
 
 	mov a, m ; Get tile index
 	ani TileIndexMask
@@ -303,7 +209,7 @@ PlayerMove:
 
 	; If along the same movement axis, keep looping
 	lda PlayerMoveDir
-	mov l, a ; [L] = Current search direction
+	mov e, a ; [E] = Current search direction
 	xra c
 	rrc ; [CY] = PlayerMoveDir.Axis XOR arrow.Axis
 	jnc .perpArrowSearchLoop ; Keep searching, this arrow is pointing along current movement axis, we need to find a perpendicular arrow
@@ -319,8 +225,8 @@ PlayerMove:
 	;         ^#
 	;         ##
 
-	mvi h, 0xff ; Sentinel that we can tell apart from a position
-	push h ; [HL] = 0xFF<Current search direction>
+	mvi d, 0xff ; Sentinel that we can tell apart from a position
+	push d ; [DE] = 0xFF<Current search direction>
 	inr b ; account for added stack entry
 
 	; Now, change the PlayerMoveDir
@@ -340,51 +246,40 @@ PlayerMove:
 	ret
 
 .performMove:
+	; [HL] = furthest tile from player
+
 	; Check if we are moving the player this iteration (B=1).
 	; If B=1, DE currently holds the target coordinates for the player.
 	mov a, b
 	cpi 1
 	jnz .skipPlayerPosUpdate
-	xchg               ; [HL] = new player pos
-	shld PlayerPos     ; Update player position in memory
-	xchg               ; Restore [DE] to target position
+	; [HL] = new player pos
+	mov a, l
+	sta PlayerPos     ; Update player position in memory
 .skipPlayerPosUpdate:
-	pop h ; [HL] = closest pos from player (from the stack)
-
-	mov a, h
+	pop d
+	mov a, d
 	cpi 0xFF ; Detect search direction sentinel
 	jz .performMoveDecrementAndLoop
 
-	push h ; Save the closest pos. This MUST become the furthest pos for the next iteration!
-	push b ; save loop count
+	; [DE] = closest tile from player (from the stack)
+	; [HL] = furthest tile from player
 
-	; Get address of closest pos
-	push d ; save furthest pos
-	  xchg ; [DE] = closest pos
-	  call TileAddressFromPos ; [HL] = addr of closest
-	  mov b, h
-	  mov c, l ; [BC] = addr of closest
-	pop d ; [DE] = furthest pos
-
-	; Get address of furthest pos
-	call TileAddressFromPos ; [HL] = addr of furthest
-
-	; Write from closest pos [BC] to furthest pos [HL]
-	ldax b
+	; Write from closest pos [DE] to furthest pos [HL]
+	ldax d
 	ori NeedsRedrawMask
 	mov m, a
 
-	pop b ; restore loop count
-	pop d ; [DE] = closest pos (this is the NEW target space for the next loop!)
+	xchg ; [HL] = closest tile from player
 
 .performMoveDecrementAndLoop:
 	; Decrement and loop until B hits 0
 	dcr b
 	jnz .performMove
 
-	; [DE] = original player position before the move
+	; [HL] = original player position before the move
 	; Clear foreground tile on the starting position, the player just moved away from this tile.
-	call TileAddressFromPos ; [HL] = addr of closest
+	;xchg ; [HL] = losest tile from player
 	mvi m, TileEmpty_Index | NeedsRedrawMask
 
 	ora a ; clear carry bit to indicate that the move was performed successfully
@@ -491,12 +386,9 @@ LoadLevel:
 	cpi low(LevelEnd)
 	jnz .readCompressed
 
-	; [HL] = uncompressed player coordinates
+	; [HL] = Points at player starting position for level
 	mov a, m
-	sta PlayerStartY
-	inx h
-	mov a, m
-	sta PlayerStartX
+	sta PlayerPos
 
 	pop h
 	pop d
@@ -506,13 +398,6 @@ LoadLevel:
 GameInit:
 	lxi h, Level_ArrowIntro_0
 	call LoadLevel
-
-	lda PlayerStartX
-	sta PlayerTileX
-
-	lda PlayerStartY
-	sta PlayerTileY
-
 	call Draw
 	ret
 
@@ -852,18 +737,13 @@ Tiles:
 ;=======================================
 ; Game data
 
-PlayerPos:
-PlayerTileY: ds 1
-PlayerTileX: ds 1
+PlayerPos: ds 1
 
 PlayerMoveDir: ds 1
 ; PlayerMoveStoneStackIndex: ds 1
 
 KeyboardRow6Down: ds 1
 KeyboardRow6Pressed: ds 1
-
-PlayerStartY: ds 1
-PlayerStartX: ds 1
 
 ; Align level to 256 offset
 ; This eneables us to translate easily between
