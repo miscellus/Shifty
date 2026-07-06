@@ -31,16 +31,16 @@ TileHole:
 ;---------------------------------------
 TileGoal_Index equ 2
 TileGoal:
-	db 0b11111111
-	db 0b11111111
-	db 0b11111111
-	db 0b11111111
-	db 0b11111111
-	db 0b11111111
-	db 0b11111111
-	db 0b11111111
-	db 0b11111111
-	db 0b11111111
+	db 0b00000000
+	db 0b00000000
+	db 0b00011000
+	db 0b00110100
+	db 0b00111100
+	db 0b00011000
+	db 0b00000000
+	db 0b00000000
+	db 0b00000000
+	db 0b00000000
 
 ;---------------------------------------
 TileWallBrick_Index equ 3
@@ -169,49 +169,35 @@ TileBoxKidDown:
 	db 0b00010000
 
 ;---------------------------------------
-TileCrateStone_Index equ 12
-TileCrateStone:
+TileDoorOpen_Index equ 12
+TileDoorOpen:
+	db 0b00000000
 	db 0b01111110
-	db 0b11111111
-	db 0b11101011
-	db 0b11010001
-	db 0b11000001
-	db 0b11001001
-	db 0b11000001
-	db 0b11100011
+	db 0b00000011
+	db 0b01000001
+	db 0b01100001
+	db 0b01111111
+	db 0b01111111
+	db 0b01111111
 	db 0b01111110
 	db 0b00000000
 
 ;---------------------------------------
-TileWallBrick2_Index equ 13
-TileWallBrick2:
-	db 0b01110111
-	db 0b01110111
-	db 0b01110000
-	db 0b00000111
-	db 0b01110111
-	db 0b01110111
-	db 0b01110111
-	db 0b01110000
-	db 0b00000111
-	db 0b01110111
+TileDoorClosed_Index equ 13
+TileDoorClosed:
+	db 0b00000000
+	db 0b01111110
+	db 0b00010011
+	db 0b00100101
+	db 0b01001001
+	db 0b00010011
+	db 0b00100101
+	db 0b01001011
+	db 0b01111110
+	db 0b00000000
 
 ;---------------------------------------
-TileWallBrick3_Index equ 14
-TileWallBrick3:
-	db 0b11011101
-	db 0b11010111
-	db 0b11011101
-	db 0b11011101
-	db 0b01111101
-	db 0b11011101
-	db 0b11010111
-	db 0b11011101
-	db 0b11011101
-	db 0b01111101
-
-;---------------------------------------
-TileWallBrick4_Index equ 15
+TileWallBrick4_Index equ 14
 TileWallBrick4:
 	db 0b10011101
 	db 0b11011111
@@ -223,4 +209,18 @@ TileWallBrick4:
 	db 0b11011001
 	db 0b11011101
 	db 0b11111101
+
+;---------------------------------------
+TileCrateStone_Index equ 15
+TileCrateStone:
+	db 0b01111110
+	db 0b11111111
+	db 0b11101011
+	db 0b11010001
+	db 0b11000001
+	db 0b11001001
+	db 0b11000001
+	db 0b11100011
+	db 0b01111110
+	db 0b00000000
 

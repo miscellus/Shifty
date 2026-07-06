@@ -53,14 +53,13 @@ TryGetNeigborAddr:
 .right:
 	adi 8
 	mov l, a
-	cpi 8*23
+	cpi 8*24
 	cmc
 	ret
 .left:
 	sui 8
 	mov l, a
 	ret
-
 
 .vertical:
 	rrc
@@ -86,8 +85,8 @@ PlayerMove:
 	; xra a
 	; sta PlayerMoveStoneStackIndex
 
-	lxi h, Level
 	lda PlayerPos
+	mvi h, high(Level)
 	mov l, a
 
 	push h ; push our initial position
@@ -111,6 +110,12 @@ PlayerMove:
 	cpi TileWallBrick_Index
 	jz .foundSolid
 
+	cpi TileDoorClosed_Index
+	jz .foundSolid
+
+	cpi TileDoorOpen_Index
+	jz .foundOpenDoor
+
 	; Check for hole
 	cpi TileHole_Index
 	jz .foundHole
@@ -122,6 +127,24 @@ PlayerMove:
 
 	; Assume we found empty
 	jmp .performMove
+
+.foundOpenDoor:
+	mov a, b
+	cpi 1
+	jnz .foundSolid
+
+	; TODO(jkk): What if we have the following?
+	; ..###    ..###
+	; .@>D# or ..#D#
+	; ..###    ..@^#
+
+	pop h ; empty search stack
+	lxi h, CurrentLevelIndex
+	inr m
+	mov a, m
+	call GotoLevel
+	ora a
+	ret
 
 .foundHole:
 	; If closest tile was the player,
@@ -332,14 +355,27 @@ ReadInput:
 	ora a
 	ret
 
+GotoLevel:
+; [A] = Level index to go to
+	add a ; 2 * level index
+	lxi b, LevelLookupTable
+	add c
+	mov c, a
+	mvi a, 0
+	adc b
+	ldax b
+	mov l, a
+	inx b
+	ldax b
+	mov h, a
+	; jmp LoadLevel
+
+	; Intented fallthrough
+
 LoadLevel:
 ; [HL] = pointer to compressed level data
 ; Clobbers [A]
 ; Returns: Level buffer filled, PlayerStartY/X set
-	push b
-	push d
-	push h
-
 	lxi b, Level ; [BC] = Destination pointer for RAM buffer
 
 ; Compressed byte format: CCC TTTTT
@@ -389,15 +425,12 @@ LoadLevel:
 	; [HL] = Points at player starting position for level
 	mov a, m
 	sta PlayerPos
-
-	pop h
-	pop d
-	pop b
 	ret
 
 GameInit:
-	lxi h, Level_ArrowIntro_0
-	call LoadLevel
+	xra a
+	sta CurrentLevelIndex
+	call GotoLevel
 	call Draw
 	ret
 
@@ -419,19 +452,6 @@ TileAddressFromPos:
 	mvi a, 0
 	adc h
 	mov h, a
-	ret
-
-TileDataFromPos:
-; [D] = X pos
-; [E] = Y pos
-; -> [BC] = Tile data
-; Clobbers [PSW] [A]
-	push h
-	call TileAddressFromPos
-	mov c, m
-	inx h
-	mov b, m
-	pop h
 	ret
 
 Draw:
@@ -594,7 +614,7 @@ DrawTile:
 .WriteColumns:
 	in PortLcdStat
 	rlc ; shift busy bit out into carry bit
-	jc .WriteColumns ; If cary set, LCD is busy, so keep looping	mov a, m
+	jc .WriteColumns ; If cary set, LCD is busy, so keep looping
 	mov a, m
 	out PortLcdData ; Write column to LCD memory
 	inx h
@@ -740,6 +760,8 @@ Tiles:
 PlayerPos: ds 1
 
 PlayerMoveDir: ds 1
+
+CurrentLevelIndex: ds 1
 ; PlayerMoveStoneStackIndex: ds 1
 
 KeyboardRow6Down: ds 1
