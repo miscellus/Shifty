@@ -147,32 +147,34 @@ PlayerMove:
 	ret
 
 .foundHole:
-	; If closest tile was the player,
-	;   the hole acts as a solid wall, so cancel the move
-	; Else if the closest tile was a stone,
-	;   we are moving a stone into a hole,
-	;   so clear both and end in
+	; First we must find the head pushable tile.
+	; Because the train of pushables could have turns signified by 0xFF sentinels,
+	; we need to keep popping the stack as long as the top is a 0xFF turn sentinel.
 
-	mov a, b
-	cpi 1
-	jz .cancelMove ; The closest tile must be the player tile (i.e. not a stone), so cancel the move
+.skipDirectionChangeSentinelsLoop:
+	; We need to follow the arrows
+	pop d
+	dcr b
+	jz .returnMoveBlocked
+	mov a, d
+	cpi 0xff
+	jz .skipDirectionChangeSentinelsLoop
 
-	; [HL] = furthest tile address
-	xthl ; [TOS] = furthest tile address, [HL] = closest tile address
-	mov a, m
-	ani TileIndexMask
-	cpi TileCrateStone_Index
-	jnz .foundSolid ; The previous tile was not a stone, so cancel move
+	; Now we are on the first non-direction change tile
+	; If it is pushable, it should go in the hole
 
-	; Stone is going into hole
+	ldax d
+	ora a
+	jp .cancelMove ; If bit 7 (sign bit) is 0, head is _NOT_ pushable, so cancel move
 
-	; Clear stone tile to ground
-	mvi m, TileEmpty_Index | NeedsRedrawMask
+	; Head was a pushable, so it should go in the hole (remove both)
 
-	; Clear hole to ground
-	xthl ; [HL] = furthest tile address (the hole), [TOS] = closest tile address
-	mvi m, TileEmpty_Index | NeedsRedrawMask
-
+	; [HL] = current tile (the hole)
+	; [DE] = head tile
+	xchg
+	mvi a, TileEmpty_Index | NeedsRedrawMask
+	mov m, a
+	stax d
 	jmp .performMove
 
 .foundPushable:
@@ -426,7 +428,7 @@ LoadLevel:
 	ret
 
 GameInit:
-	xra a
+	mvi a, 0
 	sta CurrentLevelIndex
 	call GotoLevel
 	call Draw
