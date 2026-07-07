@@ -170,10 +170,8 @@ PlayerMove:
 	mvi m, TileEmpty_Index | NeedsRedrawMask
 
 	; Clear hole to ground
-	pop h ; [HL] = furthest tile address (the hole)
+	xthl ; [HL] = furthest tile address (the hole), [TOS] = closest tile address
 	mvi m, TileEmpty_Index | NeedsRedrawMask
-
-	push h
 
 	jmp .performMove
 
