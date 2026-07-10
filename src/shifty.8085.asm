@@ -19,7 +19,7 @@ DirectionUp    equ 0b01
 DirectionLeft  equ 0b10
 DirectionDown  equ 0b11
 
-	org MapRamBase
+	org ProgramBaseAddr
 GameStart:
 	call GameInit
 
@@ -756,6 +756,7 @@ Tiles:
 
 ;=======================================
 ; Game data
+VariablesStart:
 
 PlayerPos: ds 1
 
@@ -767,10 +768,13 @@ CurrentLevelIndex: ds 1
 KeyboardRow6Down: ds 1
 KeyboardRow6Pressed: ds 1
 
+VariablesEnd:
+
 ; Align level to 256 offset
 ; This eneables us to translate easily between
 ; Y coordinates and the 3 least significant
 ; bits of the tile address.
 Level equ ($ + 0xff) & 0xff00
 LevelEnd equ Level + 8*24
-
+	assert $ < ProgramLimitAddr
+	assert Level - VariablesEnd < 60

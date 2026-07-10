@@ -21,8 +21,9 @@ Port81C55A   equ   0xB9        ; 81C55 Port A (LCD 1-8 / Key Strobe)
 Port81C55B   equ   0xBA        ; 81C55 Port B (LCD 9-10 / Bell / Power)
 PortKeyIn    equ   0xE8        ; Keyboard Data IN Port
 
-HookTimer    equ   0xF38F      ; RST 7.5 Timer Hook Address
-MapRamBase   equ   0xA000      ; Safe execution / map RAM origin
+HookTimer     equ   0xF38F     ; RST 7.5 Timer Hook Address
+ProgramBaseAddr   equ 0xA000   ; Safe execution / map RAM origin
+ProgramLimitAddr  equ 0xF380
 
              endif
 
@@ -37,7 +38,8 @@ Port81C55B   equ   0xB2        ; 81C55 Port B (LCD 9-10 / Bell / Power)
 PortKeyIn    equ   0xE0        ; Keyboard Data IN Port
 
 HookTimer    equ   0xFCBB      ; RST 7.5 Timer Hook Address
-MapRamBase   equ   0xA000      ; Safe execution / map RAM origin
+ProgramBaseAddr   equ 0xA000      ; Safe execution / map RAM origin
+ProgramLimitAddr  equ 0xF5F4 ; TODO
 
              endif
 
@@ -54,8 +56,8 @@ PortKeyIn    equ   0xE8
 
 ; NOTE: Hook address may vary slightly from T100 based on ROM revision
 HookTimer    equ   0xFCBB      ; Pending exact M10 ver                  if ication
-MapRamBase   equ   0xA000
-
+ProgramBaseAddr   equ   0xA000
+ProgramLimitAddr  equ ProgramBaseAddr ; TODO
              endif
 
 ; ------------------------------------------------------------------
@@ -71,6 +73,6 @@ PortKeyIn    equ   0xE8
 
 ; NOTE: Hook address may vary slightly based on reference ROM
 HookTimer    equ   0xFCBB      ; Pending exact KC85 ver                 if ication
-MapRamBase   equ   0xA000
-
+ProgramBaseAddr   equ   0xA000
+ProgramLimitAddr  equ ProgramBaseAddr ; TODO
              endif
