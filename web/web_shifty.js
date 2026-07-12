@@ -147,6 +147,9 @@
                     s: document.getElementById('cpu-s')
                 },
                 debug: {
+                    container: document.getElementById('debug-container'),
+                    btnToggleDebug: document.getElementById('btn-toggle-debug'),
+
                     fileSelector: document.getElementById('file-selector'),
                     sourceCode: document.getElementById('source-code'),
                     btnRunPause: document.getElementById('btn-run-pause'),
@@ -547,6 +550,9 @@
         }
 
         setupDebugger() {
+            this.ui.debug.btnToggleDebug.addEventListener('click', () => {
+                document.body.classList.toggle('debugger-hidden');
+            });
             this.ui.debug.btnRunPause?.addEventListener('click', () => {
                 if (this.isPaused) {
                     const cpu = this.getCpuState();

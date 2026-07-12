@@ -35,15 +35,11 @@
         /* --- Layout Architecture --- */
         .top-panel {
             flex: 0 0 auto;
-            background: var(--lcd-pixel);
-            padding: 12px;
-            border-radius: 8px;
             display: flex;
             justify-content: center;
-            border: 1px solid var(--border-color);
         }
 
-        .workspace {
+        #debugger-container {
             flex: 1 1 auto;
             display: grid;
             grid-template-columns: 1fr 350px; /* Code gets remaining space, Sidebar gets 350px */
@@ -69,12 +65,8 @@
         canvas {
             border-radius: 6px;
             border: solid 8px var(--lcd-bg);
-            box-shadow:
-                0 8px 10px rgba(0,0,0,0.6),
-                inset 0 0 3px rgba(0,0,0,0.8);
             aspect-ratio: 240 / 64;
             width: 100%;
-            max-width: 800px; /* Keeps it from stretching too far on ultrawides */
         }
 
         .debug-controls {
@@ -277,9 +269,51 @@
         .touch-btn.right { grid-area: right; }
         .touch-btn.down { grid-area: down; }
 
+        .hidden {
+            display: none !important;
+        }
+
+        #btn-toggle-debug {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            padding: 6px 12px;
+            cursor: pointer;
+            background: #333;
+            color: #eee;
+            border: 1px solid #555;
+            border-radius: 4px;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+
+
+        #btn-toggle-debug::before {
+            display: inline;
+            content: "hide debugger";
+        }
+        body.debugger-hidden #btn-toggle-debug::before {
+            content: "debugger";
+        }
+        #btn-toggle-debug:hover {
+            background: #444;
+        }
+
+        /* --- Max Viewport Canvas Mode --- */
+
+        body.debugger-hidden #debugger-container {
+            display: none !important;
+        }
+
+        body.debugger-hidden .top-panel {
+            flex: 1 1 auto;
+            align-items: center; /* Center the canvas vertically */
+            height: 100%;
+        }
+
         /* Responsive Breakpoint */
         @media (max-width: 900px) {
-            .workspace {
+            #debugger-container {
                 grid-template-columns: 1fr; /* Stack columns on small screens */
             }
             .right-pane {
@@ -300,11 +334,12 @@
 </head>
 <body>
 
-    <header class="top-panel">
+    <div class="top-panel">
         <canvas id="canvas"></canvas>
-    </header>
+        <button id="btn-toggle-debug"></button>
+    </div>
 
-    <main class="workspace">
+    <div class="workspace" id="debugger-container">
 
         <div class="left-pane">
             <div class="debug-controls">
@@ -318,8 +353,7 @@
                 <select id="file-selector">
                     <option>main.asm</option>
                 </select>
-                <div id="source-code" class="source-code">
-                    </div>
+                <div id="source-code" class="source-code"></div>
             </div>
         </div>
 
@@ -361,7 +395,7 @@
             </div>
 
         </div>
-    </main>
+    </div>
 
     <div class="touch-controls">
         <button class="touch-btn up" data-row="6" data-col="1">↑</button>
