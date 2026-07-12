@@ -3,24 +3,13 @@
 @ = TileBoxKidDown #player
 s = TileCrateStone #pushable
 h = TileHole
-$ = TileGoal #goal
+$ = TileGoal #goal #pushable
 > = TileRightArrow #pushable
 ^ = TileUpArrow #pushable
 < = TileLeftArrow #pushable
 v = TileDownArrow #pushable
 d = TileDoorClosed #solid
 D = TileDoorOpen
-
-Test
-dddddddddddddddddddddddd
-ddddddddd$dddddddddddddd
-dddddd$$$$dddddddddddddd
-dddddd$ddddddddddddddddd
-dddddd$$$$$@dddddddddddd
-dddddddddddddddddddddddd
-dddddddddddddddddddddddd
-dddddddddddddddddddddddd
-
 
 LevelEntrance
 .ssssssv################
@@ -45,8 +34,8 @@ Level_ArrowIntro_20
 
 Level_ArrowIntro_30
 ########################
-######............@#####
-######D.........########
+######d......$....@#####
+########################
 ########################
 ########################
 ########################
@@ -58,8 +47,8 @@ Level_ArrowIntro_40
 ########################
 ######.v...#d.h...######
 ######>.##>######.######
-######s@##.##.^...######
-######.$##.<......######
+######s@##.##$^$..######
+######..##.<......######
 ########################
 ########################
 
@@ -69,6 +58,17 @@ Level_ArrowIntro_3
 ###..v######............
 ##.>.^##...#............
 ##@s.....#.h......D.....
+##.>.v######............
+###..^######............
+############............
+
+
+Level_ArrowIntro_4
+############............
+############............
+###..v######............
+##.>.^##...#............
+##@$.....#.h......d.....
 ##.>.v######............
 ###..^######............
 ############............

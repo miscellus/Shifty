@@ -120,8 +120,9 @@ PlayerMove:
 	cpi TileHole_Index
 	jz .foundHole
 
-	cpi TileGoal_Index
-	jz .foundGoal
+	; If goal acted as a "pickup"
+	; cpi TileGoal_Index
+	; jz .foundGoal
 
 	; Block the move if search has looped around and is trying to push into current player position
 	xri TileBoxKidRight_Index
@@ -149,37 +150,6 @@ PlayerMove:
 	ora a
 	ret
 
-.foundGoal:
-	; TODO clear goal, count down
-	mvi a, TileEmpty_Index
-	mov m, a
-
-	lxi d, MissingTargets
-	ldax d
-	dcr a
-	stax d
-
-	jnz .performMove
-
-	mov e, l ; save l
-	mvi l, 8*24; [HL] => Level base
-.openDoorsLoop:
-	dcr l
-	mov a, m
-	ani TileIndexMask
-	cpi TileDoorClosed_Index
-	jnz .notClosedDoor
-	; Open the closed door
-	mvi m, TileDoorOpen_Index | NeedsRedrawMask
-.notClosedDoor:
-	mov a, l
-	ora a
-	jnz .openDoorsLoop
-
-	mov l, e ; restore l
-	jmp .performMove
-
-
 
 .foundHole:
 	; First we must find the head pushable tile.
@@ -203,6 +173,11 @@ PlayerMove:
 	jp .cancelMove ; If bit 7 (sign bit) is 0, head is _NOT_ pushable, so cancel move
 
 	; Head was a pushable, so it should go in the hole (remove both)
+
+	; Test if head was a goal
+	ani TileIndexMask
+	cpi TileGoal_Index
+	cz RemoveGoal
 
 	; [HL] = current tile (the hole)
 	; [DE] = head tile
@@ -258,6 +233,14 @@ PlayerMove:
 
 	mov a, m ; Get tile index
 	ani TileIndexMask
+
+	; Test for goal
+	cpi TileGoal_Index
+	jnz .foundSolid_notGoal
+	  call RemoveGoal
+	  jmp .performMove
+.foundSolid_notGoal:
+
 	xri TileRightArrow_Index
 	cpi 4
 	jnc .perpArrowSearchLoop ; Not an arrow
@@ -342,6 +325,36 @@ PlayerMove:
 
 	ora a ; clear carry bit to indicate that the move was performed successfully
 	ret
+
+
+RemoveGoal:
+	push h
+	mvi a, TileEmpty_Index
+	mov m, a
+
+	lxi h, MissingTargets
+	dcr m
+	jnz .end
+
+	lxi h, Level | 8*24; [HL] => Level base
+.openDoorsLoop:
+	dcr l
+	mov a, m
+	ani TileIndexMask
+	cpi TileDoorClosed_Index
+	jnz .notClosedDoor
+	; Open the closed door
+	mvi m, TileDoorOpen_Index | NeedsRedrawMask
+.notClosedDoor:
+	mov a, l
+	ora a
+	jnz .openDoorsLoop
+.end:
+	pop h
+	ret
+
+
+
 
 ReadInput:
 ; Output:
