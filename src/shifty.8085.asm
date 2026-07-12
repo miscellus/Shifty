@@ -397,6 +397,15 @@ ReadInput:
 	mvi c, DirectionDown
 .downNotPressed:
 
+	mov a, b ; restore pressed
+	ani KeyRestartLevel
+	lda CurrentLevelIndex
+	jz .restartLevelNotPressed
+	call GotoLevel
+	call Draw
+	stc
+	ret
+.restartLevelNotPressed:
 	mov a, c
 	sta PlayerMoveDir
 
@@ -596,12 +605,14 @@ KeyUp    equ (1 << 1)
 KeyDown  equ (1 << 2)
 KeyLeft  equ (1 << 3)
 KeyRight equ (1 << 4)
+KeyRestartLevel equ (1 << 7)
 	endif
 	ifdef TargetT100
 KeyUp    equ (1 << 6)
 KeyDown  equ (1 << 7)
 KeyLeft  equ (1 << 4)
 KeyRight equ (1 << 5)
+KeyRestartLevel equ ???
 	endif
 
 ReadArrowKeyRow:
