@@ -120,6 +120,9 @@ PlayerMove:
 	cpi TileHole_Index
 	jz .foundHole
 
+	cpi TileGoal_Index
+	jz .foundGoal
+
 	; Block the move if search has looped around and is trying to push into current player position
 	xri TileBoxKidRight_Index
 	cpi 4
@@ -145,6 +148,38 @@ PlayerMove:
 	call GotoLevel
 	ora a
 	ret
+
+.foundGoal:
+	; TODO clear goal, count down
+	mvi a, TileEmpty_Index
+	mov m, a
+
+	lxi d, MissingTargets
+	ldax d
+	dcr a
+	stax d
+
+	jnz .performMove
+
+	mov e, l ; save l
+	mvi l, 8*24; [HL] => Level base
+.openDoorsLoop:
+	dcr l
+	mov a, m
+	ani TileIndexMask
+	cpi TileDoorClosed_Index
+	jnz .notClosedDoor
+	; Open the closed door
+	mvi m, TileDoorOpen_Index | NeedsRedrawMask
+.notClosedDoor:
+	mov a, l
+	ora a
+	jnz .openDoorsLoop
+
+	mov l, e ; restore l
+	jmp .performMove
+
+
 
 .foundHole:
 	; First we must find the head pushable tile.
@@ -425,6 +460,12 @@ LoadLevel:
 	; [HL] = Points at player starting position for level
 	mov a, m
 	sta PlayerPos
+
+	; [HL] = Points at number of targets in level
+	inx h
+	mov a, m
+	sta MissingTargets
+
 	ret
 
 GameInit:
@@ -762,6 +803,8 @@ PlayerPos: ds 1
 
 PlayerMoveDir: ds 1
 
+MissingTargets: ds 1
+
 CurrentLevelIndex: ds 1
 ; PlayerMoveStoneStackIndex: ds 1
 
@@ -777,4 +820,4 @@ VariablesEnd:
 Level equ ($ + 0xff) & 0xff00
 LevelEnd equ Level + 8*24
 	assert $ < ProgramLimitAddr
-	assert Level - VariablesEnd < 60
+	assert Level - VariablesEnd < 250

@@ -6,16 +6,17 @@
 LevelLookupTable:
 ; Maps Level Index -> Pointer to Level Data
 ;-------------------------------------------------------------------------------
-    dw LevelEntrance ; Level 0
-    dw Level_ArrowIntro_20 ; Level 1
-    dw Level_ArrowIntro_30 ; Level 2
-    dw Level_ArrowIntro_40 ; Level 3
-    dw Level_ArrowIntro_3 ; Level 4
-    dw Level__IDEA ; Level 5
-    dw Level_TestPushables_0 ; Level 6
-    dw Level_TestPushables_1 ; Level 7
-    dw Level_TestPushables_2 ; Level 8
-    dw Level1 ; Level 9
+    dw Test ; Level 0
+    dw LevelEntrance ; Level 1
+    dw Level_ArrowIntro_20 ; Level 2
+    dw Level_ArrowIntro_30 ; Level 3
+    dw Level_ArrowIntro_40 ; Level 4
+    dw Level_ArrowIntro_3 ; Level 5
+    dw Level__IDEA ; Level 6
+    dw Level_TestPushables_0 ; Level 7
+    dw Level_TestPushables_1 ; Level 8
+    dw Level_TestPushables_2 ; Level 9
+    dw Level1 ; Level 10
 
 ;-------------------------------------------------------------------------------
 TileInfoFromTileIndexMap:
@@ -55,6 +56,19 @@ TileInfoFromTileIndexMap:
     db 0b01011111 ; 
 
 ;-------------------------------------------------------------------------------
+Test:
+;-------------------------------------------------------------------------------
+.TileData:
+    db 0xed, 0xed, 0xed, 0xed, 0xed, 0xed, 0x2d, 0x42, 0x8d, 0x02, 0x0d, 0x02
+    db 0x8d, 0x02, 0x0d, 0x02, 0x6d, 0x22, 0x0d, 0x02, 0xcd, 0x02, 0xcd, 0x0b
+    db 0xed, 0xed, 0xed, 0xed, 0xed, 0xed, 0xed, 0xed, 0xed, 0xed, 0xed, 0xed
+    db 0x4d
+
+.PlayerPos: db 0o134
+
+.NumGoals: db 11
+
+;-------------------------------------------------------------------------------
 LevelEntrance:
 ;-------------------------------------------------------------------------------
 .TileData:
@@ -65,16 +79,20 @@ LevelEntrance:
 
 .PlayerPos: db 0o044
 
+.NumGoals: db 0
+
 ;-------------------------------------------------------------------------------
 Level_ArrowIntro_20:
 ;-------------------------------------------------------------------------------
 .TileData:
     db 0xe3, 0xe3, 0xe3, 0xe3, 0xe3, 0xe3, 0xe3, 0xe3, 0xe3, 0xe3, 0x43, 0x00
-    db 0x0b, 0xa3, 0x20, 0xa3, 0x20, 0xa3, 0x2f, 0xa3, 0x20, 0xa3, 0x20, 0xa3
-    db 0x20, 0xa3, 0x20, 0x63, 0x0c, 0x01, 0x20, 0xe3, 0xe3, 0xe3, 0xe3, 0xe3
+    db 0x0b, 0xa3, 0x20, 0xa3, 0x20, 0xa3, 0x20, 0xa3, 0x20, 0xa3, 0x20, 0xa3
+    db 0x2f, 0xa3, 0x20, 0x63, 0x0c, 0x01, 0x20, 0xe3, 0xe3, 0xe3, 0xe3, 0xe3
     db 0x43
 
 .PlayerPos: db 0o124
+
+.NumGoals: db 0
 
 ;-------------------------------------------------------------------------------
 Level_ArrowIntro_30:
@@ -87,17 +105,21 @@ Level_ArrowIntro_30:
 
 .PlayerPos: db 0o221
 
+.NumGoals: db 0
+
 ;-------------------------------------------------------------------------------
 Level_ArrowIntro_40:
 ;-------------------------------------------------------------------------------
 .TileData:
     db 0xe3, 0xe3, 0xe3, 0xe3, 0xe3, 0xe3, 0x23, 0x00, 0x04, 0x0f, 0x00, 0x63
-    db 0x07, 0x00, 0x0b, 0x00, 0x63, 0x00, 0xc3, 0x00, 0xc3, 0x00, 0x04, 0x20
-    db 0xc3, 0x06, 0x63, 0x0c, 0x23, 0x00, 0x63, 0x02, 0x03, 0x20, 0x63, 0x01
+    db 0x07, 0x00, 0x0b, 0x02, 0x63, 0x00, 0xc3, 0x00, 0xc3, 0x00, 0x04, 0x20
+    db 0xc3, 0x06, 0x63, 0x0d, 0x23, 0x00, 0x63, 0x00, 0x03, 0x20, 0x63, 0x01
     db 0x03, 0x05, 0x00, 0x63, 0x00, 0x03, 0x20, 0x63, 0x00, 0x03, 0x20, 0x63
     db 0x60, 0xe3, 0xe3, 0xe3, 0xe3, 0xe3, 0xe3, 0x23
 
 .PlayerPos: db 0o074
+
+.NumGoals: db 1
 
 ;-------------------------------------------------------------------------------
 Level_ArrowIntro_3:
@@ -109,6 +131,8 @@ Level_ArrowIntro_3:
     db 0xe0, 0xe0, 0xe0, 0x60, 0x0c, 0xe0, 0xe0, 0xe0, 0xe0, 0xe0, 0x40
 
 .PlayerPos: db 0o024
+
+.NumGoals: db 0
 
 ;-------------------------------------------------------------------------------
 Level__IDEA:
@@ -126,6 +150,8 @@ Level__IDEA:
 
 .PlayerPos: db 0o024
 
+.NumGoals: db 0
+
 ;-------------------------------------------------------------------------------
 Level_TestPushables_0:
 ;-------------------------------------------------------------------------------
@@ -139,6 +165,8 @@ Level_TestPushables_0:
 
 .PlayerPos: db 0o000
 
+.NumGoals: db 0
+
 ;-------------------------------------------------------------------------------
 Level_TestPushables_1:
 ;-------------------------------------------------------------------------------
@@ -150,6 +178,8 @@ Level_TestPushables_1:
     db 0x6f, 0x60, 0x4f, 0x07, 0x6f, 0x06, 0x0f, 0x07, 0xaf, 0x06
 
 .PlayerPos: db 0o010
+
+.NumGoals: db 0
 
 ;-------------------------------------------------------------------------------
 Level_TestPushables_2:
@@ -165,6 +195,8 @@ Level_TestPushables_2:
 
 .PlayerPos: db 0o106
 
+.NumGoals: db 0
+
 ;-------------------------------------------------------------------------------
 Level1:
 ;-------------------------------------------------------------------------------
@@ -178,3 +210,5 @@ Level1:
     db 0x00, 0x83, 0x00, 0x01, 0x00, 0xe3, 0x03
 
 .PlayerPos: db 0o132
+
+.NumGoals: db 0

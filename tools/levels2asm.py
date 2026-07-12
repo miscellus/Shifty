@@ -58,7 +58,7 @@ def main():
                 tile_lut[tile_id]["info"] |= flag_pushable
 
             # Save mapping for the level parser
-            mappings[char] = {'id': tile_id, 'is_player': '#player' in tags}
+            mappings[char] = {'id': tile_id, 'tags': tags}
             i += 1
 
         else:
@@ -109,6 +109,7 @@ def main():
 
         current_id = None
         run_count = 0
+        num_goals = 0
 
         # Helper to pack and emit the current run
         def flush_run():
@@ -116,6 +117,7 @@ def main():
                 # Top 3 bits: (count - 1), Bottom 5 bits: Tile ID
                 packed_byte = ((run_count - 1) << 5) | current_id
                 compressed_bytes.append(packed_byte)
+
 
         # Traverse Column-Major (x outer, y inner)
         for x in range(24):
@@ -127,8 +129,11 @@ def main():
                 tile = mappings[char]
                 tile_id = tile['id']
 
-                if tile['is_player']:
+                if '#player' in tile['tags']:
                     px, py = x, y
+
+                if '#goal' in tile['tags']:
+                    num_goals += 1
 
                 # RLE Logic: Match found and count is under 8
                 if current_id == tile_id and run_count < 8:
@@ -155,8 +160,9 @@ def main():
         out.append("")
         if px is not None:
             out.append(f".PlayerPos: db 0o{player_pos_packed:03o}")
-            # out.append(f".PlayerStartY: db {py}")
-            # out.append(f".PlayerStartX: db {px}")
+            out.append("")
+
+        out.append(f".NumGoals: db {num_goals}")
         out.append("")
 
     # Write to disk
