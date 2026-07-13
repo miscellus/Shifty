@@ -4,32 +4,133 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NEC PC-8201A LCD Shader</title>
-    <style>
+<style>
         :root {
-            --lcd-bg: rgb(168 172 164);
-            --lcd-pixel: rgb(41 42 40);
-            --lcd-shadow: rgb(129 130 124);
-            --panel-bg: #1e1e1e;
-            --border-color: #444;
+            /* Unified Grayscale (Dark Theme Base) */
+        --gray-100: #181816; /* Darkest - App Background */
+        --gray-200: #232321; /* Panels & Surfaces */
+        --gray-300: #2f2f2c; /* Slightly raised panels (Gutters) */
+        --gray-400: #464642; /* Buttons Normal */
+        --gray-500: #5d5d58; /* Borders & Buttons Hover */
+        --gray-600: #8b8b86; /* Lighter Borders */
+        --gray-700: #b4b4b0; /* Muted Text */
+        --gray-800: #d6d6d3; /* Secondary Text (Hints, Labels) */
+        --gray-900: #f2f2f0; /* Primary Text (Bright) */
+
+        /* Retro CRT Accents */
+        --accent-red: #ff5555;
+        --accent-green: #50fa7b;
+        --accent-green-glow: rgba(80, 250, 123, 0.3);
+
+            /* === 2. SEMANTIC MAPPING === */
+
+            /* --- LCD Screen --- */
+            --lcd-bg: rgb(168, 172, 164);
+            --lcd-pixel: rgb(41, 42, 40);
+            --lcd-shadow: rgb(129, 130, 124);
+
+            /* --- Base App Theme --- */
+            --app-bg: var(--gray-100);
+            --panel-bg: var(--gray-200);
+            --border-color: var(--gray-500);
+            --text-muted: var(--gray-700);
+
+            /* --- Buttons --- */
+            --btn-bg: var(--gray-400);
+            --btn-bg-hover: var(--gray-500);
+            --btn-text: var(--gray-900);
+            --btn-border: var(--gray-600);
+            --btn-hint-text: var(--gray-800);
+
+            /* --- Source Code Viewer --- */
+            --code-text: var(--gray-900);
+            --code-bg-hover: var(--gray-300);
+            --code-bg-active: var(--gray-400);
+            --code-border-active: var(--gray-700);
+            --gutter-bg: var(--gray-300);
+            --gutter-text: var(--gray-700);
+            --breakpoint-bg: var(--accent-red);
+            --breakpoint-text: #ffffff;
+
+            /* --- CPU Debugger --- */
+            --cpu-bg: rgba(18, 18, 18, 0.95); /* Using an rgba version of gray-100 */
+            --cpu-label: var(--gray-600);
+            --cpu-val: var(--gray-900);
+            --cpu-flag-inactive: var(--gray-600);
+            --cpu-flag-active: var(--accent-green);
+            --cpu-flag-glow: var(--accent-green-glow);
+
+            /* --- Touch Controls --- */
+            --touch-bg: rgba(255, 255, 255, 0.2);
+            --touch-border: rgba(255, 255, 255, 0.4);
+            --touch-text: var(--gray-900);
+            --touch-bg-active: var(--gray-100);
+            --touch-border-active: var(--gray-300);
+            --touch-text-active: var(--gray-600);
         }
 
-        *, *:before, *:after {
-            box-sizing: border-box;
+        @media (prefers-color-scheme: light) {
+            :root {
+                /* Inverted Grayscale (Light Theme Base) */
+                --gray-900: #181816; /* Lightest - App Background */
+                --gray-800: #232321; /* Panels & Surfaces */
+                --gray-700: #2f2f2c; /* Gutters / Hover states */
+                --gray-600: #464642; /* Buttons Normal */
+                --gray-500: #5d5d58; /* Borders */
+                --gray-400: #8b8b86; /* Lighter Borders */
+                --gray-300: #b4b4b0; /* Muted Text */
+                --gray-200: #d6d6d3; /* Secondary Text */
+                --gray-100: #f2f2f0; /* Darkest - Primary Text */
+
+                /* We also need to update the rgba values that used hardcoded rgb */
+                --cpu-bg: rgba(244, 245, 245, 0.95);
+                --touch-bg-active: rgba(244, 245, 245, 0.4);
+
+                /* Optional: Tweak accents so they don't burn eyes on a white background */
+                --accent-green: #059669;
+                --accent-green-glow: rgba(5, 150, 105, 0.4);
+            }
         }
+
+        *, *:before, *:after { box-sizing: border-box; }
 
         html, body {
             height: 100%;
             margin: 0;
-            overflow: hidden; /* Prevent body scroll, handle scrolling in panels */
+            overflow: hidden;
         }
 
         body {
-            background: #121212; /* Dark theme wrapper */
+            background: var(--app-bg);
             display: flex;
             flex-direction: column;
             padding: 12px;
             gap: 12px;
             font-family: sans-serif;
+        }
+
+        /* --- Shared Typography --- */
+        .source-viewer, .cpu-debugger, .memory-viewer {
+            font-family: monospace;
+        }
+
+        .source-viewer #file-selector {
+            color: var(--btn-text);
+        }
+
+        /* --- Shared Button Styles --- */
+        .debug-controls button, #btn-toggle-debug {
+            padding: 6px 12px;
+            cursor: pointer;
+            background: var(--btn-bg);
+            color: var(--btn-text);
+            border: 1px solid var(--btn-border);
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+        .debug-controls button:hover, #btn-toggle-debug:hover {
+            background: var(--btn-bg-hover);
         }
 
         /* --- Layout Architecture --- */
@@ -42,24 +143,19 @@
         #debugger-container {
             flex: 1 1 auto;
             display: grid;
-            grid-template-columns: 1fr 350px; /* Code gets remaining space, Sidebar gets 350px */
-            gap: 12px;
-            min-height: 0; /* CRITICAL: Allows flex children to shrink/scroll */
-        }
-
-        .left-pane {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            min-height: 0;
-        }
-
-        .right-pane {
-            display: flex;
-            flex-direction: column;
+            grid-template-columns: 1fr 350px;
             gap: 12px;
             min-height: 0;
         }
+
+        .left-pane, .right-pane {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .left-pane { gap: 8px; }
+        .right-pane { gap: 12px; }
 
         /* --- Components --- */
         canvas {
@@ -77,34 +173,21 @@
             border-radius: 6px;
         }
 
-        .debug-controls button {
-            padding: 6px 12px;
-            margin-right: 5px;
-            cursor: pointer;
-            background: #333;
-            color: #eee;
-            border: 1px solid #555;
-            border-radius: 4px;
-            font-weight: bold;
-        }
+        .debug-controls button { margin-right: 5px; }
 
         .debug-controls button::after {
-            display: inline;
             content: attr(data-key);
-            color: #bbb;
+            color: var(--btn-hint-text);
             font-weight: normal;
             padding-left: 0.5em;
         }
-
-        .debug-controls button:hover { background: #444; }
 
         .source-viewer {
             flex: 1 1 auto;
             display: flex;
             flex-direction: column;
-            font-family: monospace;
             background: var(--panel-bg);
-            color: #d4d4d4;
+            color: var(--code-text);
             border: 1px solid var(--border-color);
             border-radius: 6px;
             overflow: hidden;
@@ -112,48 +195,45 @@
 
         /* --- Source Code Lines --- */
         .source-line {
-            display: flex;          /* CRITICAL: Puts gutter and code side-by-side */
+            display: flex;
             align-items: stretch;
             cursor: pointer;
-            white-space: pre;       /* Preserves your assembly indentation */
+            white-space: pre;
             line-height: 1.5;
         }
 
-        .source-line:hover {
-            background: #2a2d2e;
-        }
+        .source-line:hover { background: var(--code-bg-hover); }
 
         .source-line.active {
-            background: #37373d;
-            outline: 1px solid #75715e;
+            background: var(--code-bg-active);
+            outline: 1px solid var(--code-border-active);
         }
 
         .gutter {
-            flex: 0 0 40px;         /* Fixed width: won't shrink, won't grow */
-            background: #252526;
-            color: #858585;
+            flex: 0 0 40px;
+            background: var(--gutter-bg);
+            color: var(--gutter-text);
             text-align: right;
             padding: 0 8px;
             margin-right: 12px;
             user-select: none;
-            position: relative;
-            border-right: 1px solid var(--border-color); /* Optional: A nice subtle divider */
+            border-right: 1px solid var(--border-color);
         }
 
         .gutter.breakpoint {
-            background: #e51400;
-            color: white;
+            background: var(--breakpoint-bg);
+            color: var(--breakpoint-text);
         }
 
         .code-text {
-            flex: 1;                /* Allows the code text to fill the remaining horizontal space */
+            flex: 1;
             padding-right: 10px;
         }
 
         #file-selector {
             padding: 6px;
-            background: #252526;
-            color: white;
+            background: var(--gutter-bg);
+            color: var(--breakpoint-text);
             border: none;
             border-bottom: 1px solid var(--border-color);
             outline: none;
@@ -162,18 +242,15 @@
         .source-code {
             flex: 1;
             overflow-y: auto;
-            padding: 8px 0;
         }
 
         /* --- CPU Debugger --- */
         .cpu-debugger {
             flex: 0 0 auto;
-            background: rgba(26, 27, 24, 0.95);
-            border: 2px solid var(--lcd-shadow);
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
             border-radius: 6px;
             padding: 12px 16px;
-            color: #a8aca4;
-            font-family: monospace;
             font-size: 14px;
             display: flex;
             flex-direction: column;
@@ -183,12 +260,11 @@
 
         .cpu-debugger hr {
             border: none;
-            border-top: 1px solid #444;
+            border-top: 1px solid var(--border-color);
             margin: 4px 0;
             width: 100%;
         }
 
-        /* Refactored Grids to fit inside a sidebar */
         .cpu-section {
             display: grid;
             column-gap: 12px;
@@ -202,33 +278,31 @@
         .cpu-section.flags { grid-template-columns: repeat(3, auto 1fr); }
 
         .cpu-label {
-            color: #81827c;
-            font-weight: bold;
+            color: var(--cpu-label);
             text-align: right;
         }
 
-        .cpu-val { color: #d1d5cb; }
-        .cpu-val.flag { color: #555c51; }
+        .cpu-val { color: var(--cpu-val); }
+        .cpu-val.flag { color: var(--cpu-flag-inactive); }
         .cpu-val.flag.active {
-            color: #85ff7a;
-            text-shadow: 0 0 4px rgba(133, 255, 122, 0.4);
+            color: var(--cpu-flag-active);
+            text-shadow: 0 0 4px var(--cpu-flag-glow);
         }
 
         /* --- Memory Viewer Placeholder --- */
         .memory-viewer {
             flex: 1 1 auto;
-            background: var(--panel-bg);
-            border: 2px dashed #555;
+            background: var(--app-bg);
+            border: 1px dashed var(--btn-border);
             border-radius: 6px;
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #777;
-            font-family: monospace;
+            color: var(--text-muted);
             min-height: 150px;
         }
 
-        /* --- Touch Controls (Preserved for Mobile) --- */
+        /* --- Touch Controls --- */
         .touch-controls {
             display: none;
             grid-template-areas:
@@ -244,10 +318,10 @@
         }
 
         .touch-btn {
-            background: rgba(255, 255, 255, 0.4);
-            border: 2px solid rgba(255, 255, 255, 0.8);
+            background: var(--touch-bg);
+            border: 2px solid var(--touch-border);
             border-radius: 50%;
-            color: #8c9685;
+            color: var(--touch-text);
             font-size: 2em;
             font-weight: 900;
             display: flex;
@@ -258,9 +332,9 @@
         }
 
         .touch-btn:active {
-            background: #1a1b18;
-            border-color: #232521;
-            color: #555c51;
+            background: var(--touch-bg-active);
+            border-color: var(--touch-border-active);
+            color: var(--touch-text-active);
             transform: translateY(2px);
         }
 
@@ -269,56 +343,32 @@
         .touch-btn.right { grid-area: right; }
         .touch-btn.down { grid-area: down; }
 
-        .hidden {
-            display: none !important;
-        }
+        .hidden { display: none !important; }
 
+        /* --- Max Viewport Canvas Mode --- */
         #btn-toggle-debug {
             position: absolute;
             top: 12px;
             right: 12px;
-            padding: 6px 12px;
-            cursor: pointer;
-            background: #333;
-            color: #eee;
-            border: 1px solid #555;
-            border-radius: 4px;
-            font-weight: bold;
             transition: background 0.2s;
         }
 
+        #btn-toggle-debug::before { content: "hide debugger"; }
 
-        #btn-toggle-debug::before {
-            display: inline;
-            content: "hide debugger";
-        }
-        body.debugger-hidden #btn-toggle-debug::before {
-            content: "debugger";
-        }
-        #btn-toggle-debug:hover {
-            background: #444;
-        }
+        body.debugger-hidden #btn-toggle-debug::before { content: "debugger"; }
 
-        /* --- Max Viewport Canvas Mode --- */
-
-        body.debugger-hidden #debugger-container {
-            display: none !important;
-        }
+        body.debugger-hidden #debugger-container { display: none !important; }
 
         body.debugger-hidden .top-panel {
             flex: 1 1 auto;
-            align-items: center; /* Center the canvas vertically */
+            align-items: center;
             height: 100%;
         }
 
-        /* Responsive Breakpoint */
+        /* Responsive Breakpoints */
         @media (max-width: 900px) {
-            #debugger-container {
-                grid-template-columns: 1fr; /* Stack columns on small screens */
-            }
-            .right-pane {
-                flex-direction: row; /* Put debugger and memory side-by-side if stacked */
-            }
+            #debugger-container { grid-template-columns: 1fr; }
+            .right-pane { flex-direction: row; }
         }
 
         @media (pointer: coarse), (max-width: 1024px) {
@@ -350,9 +400,7 @@
             </div>
 
             <div class="source-viewer">
-                <select id="file-selector">
-                    <option>main.asm</option>
-                </select>
+                <select id="file-selector"></select>
                 <div id="source-code" class="source-code"></div>
             </div>
         </div>

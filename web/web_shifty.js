@@ -584,7 +584,7 @@
             return [0, 0, 0];
         }
 
-        toHex(val, padding) {
+        toText(val, padding) {
             return val.toString(16).padStart(padding, '0').toUpperCase();
         }
 
@@ -621,7 +621,7 @@
 
             // Helper to prevent DOM thrashing by checking cached state
             const updateText = (el, key, val, padding = 2) => {
-                const hex = this.toHex(val, padding);
+                const hex = this.toText(val, padding);
                 if (this.lastCpuState[key] !== hex) {
                     el.textContent = hex;
                     this.lastCpuState[key] = hex;
