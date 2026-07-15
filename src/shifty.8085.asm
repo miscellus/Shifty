@@ -20,7 +20,12 @@ DirectionLeft  equ 0b10
 DirectionDown  equ 0b11
 
 	org ProgramBaseAddr
+
+	call ShowTitle
 GameStart:
+	call ReadInput
+	jc GameStart
+
 	call GameInit
 
 GameLoop:
@@ -490,6 +495,13 @@ LoadLevel:
 
 	ret
 
+ShowTitle:
+	lxi h, .splash
+	call DrawFullScreen
+	ret
+.splash:
+ include "splash.8085.asm"
+
 GameInit:
 	mvi a, 0
 	sta CurrentLevelIndex
@@ -809,6 +821,121 @@ SetInterruptMask_09:
 	sim
 	ei
 	ret
+
+
+
+
+
+
+
+
+
+
+
+
+; -----------------------------------------------------------
+; Subroutine: DrawFullScreen
+; Purpose:    Draws a 240x64 full-screen image formatted by the Python script
+; Input:      HL = Pointer to start of image data (e.g. lxi h, image)
+; Destroys:   A, B, C, D, H, L, Flags
+; -----------------------------------------------------------
+DrawFullScreen:
+    mvi b, 0            ; B = Controller Index (0 to 9)
+
+.ControllerLoop:
+    mov a, b
+    cpi 10              ; Are we done with all 10 controllers?
+    rz                  ; Return if B == 10
+
+    mvi c, 0            ; C = Page Index (0 to 3)
+
+.PageLoop:
+    ; --- 1. Calculate and Select Block ---
+    push h              ; [Stack: ImagePtr] Save the image data pointer
+    push b              ; [Stack: ImagePtr, Controller&Page] Save loop counters
+
+    mov a, b            ; A = Controller index
+    call GetMaskFromIndex ; Returns driver bitmask in HL
+    call LcdSelectBlock ; Select the physical driver chip
+
+    pop b               ; [Stack: ImagePtr] Restore loop counters
+
+    ; --- 2. Set LCD Page and Offset ---
+    ; Page is in C (0 to 3). Offset is 0 for full screen.
+    ; Command format: PP000000 (Bits 6 & 7 are the Page)
+    mov a, c
+    rrc                 ; Rotate right once (Bit 0 moves to Bit 7)
+    rrc                 ; Rotate right twice
+    ani 0b11000000      ; Mask out garbage, leaving PP000000
+    push b              ; [Stack: ImagePtr, Controller&Page] Save counters again
+
+    call LcdWaitReady   ; Wait for LCD
+    out PortLcdCmd      ; Send Page/Offset command
+
+    ; --- 3. Determine Transfer Width ---
+    ; Controllers 4 and 9 are cropped to 40 columns. The rest are 50.
+    pop b               ; [Stack: ImagePtr] Restore loop counters
+    mov a, b
+    cpi 4
+    jz .isCropped
+    cpi 9
+    jz .isCropped
+    mvi d, 50           ; D = 50 columns
+    jmp .startWrite
+.isCropped:
+    mvi d, 40           ; D = 40 columns
+
+.startWrite:
+    pop h               ; [] Restore Image data pointer into HL
+
+    ; --- 4. Write Data to LCD ---
+.WriteColumns:
+    in PortLcdStat
+    rlc                 ; Shift busy bit out into carry bit
+    jc .WriteColumns    ; If carry set, LCD is busy, keep looping
+
+    mov a, m            ; Read byte from image data
+    out PortLcdData     ; Write column to LCD memory
+    inx h               ; Advance image data pointer
+    dcr d               ; Decrement column counter
+    jnz .WriteColumns   ; Loop until page row is completely drawn
+
+    ; --- 5. Advance to Next Page or Controller ---
+    inr c               ; Next Page
+    mov a, c
+    cpi 4
+    jc .PageLoop        ; If Page < 4, jump back up and do the next row of 8 pixels
+
+    inr b               ; Next Controller
+    jmp .ControllerLoop ; Jump back up and start the next chip
+
+
+; -----------------------------------------------------------
+; Subroutine: GetMaskFromIndex
+; Purpose:    Computes 16-bit segment driver mask (1 << A)
+; Input:      A = Controller Index (0 to 9)
+; Output:     HL = 16-bit Driver Selection Mask
+; Destroys:   A, H, L, Flags
+; -----------------------------------------------------------
+GetMaskFromIndex:
+    lxi h, 1            ; Start with mask = 1
+    ora a               ; Is A exactly 0?
+    rz                  ; If yes, return immediately (HL = 1)
+
+.shiftLoop:
+    dad h               ; HL = HL * 2 (shifts left 1 bit natively)
+    dcr a               ; Decrement loop counter
+    jnz .shiftLoop      ; Repeat until A is 0
+    ret
+
+
+
+
+
+
+
+
+
 
 ;=======================================
 ; Tile images
