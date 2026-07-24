@@ -1,0 +1,9 @@
+.DS_Store
+._*
+.*.sw?
+*.o
+asm8085
+*.exe
+tests/tests
+scratch
+scratch/*

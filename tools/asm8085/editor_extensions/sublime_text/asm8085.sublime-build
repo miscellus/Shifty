@@ -1,0 +1,10 @@
+{
+	"cmd": ["asm8085", "$file"],
+	"file_regex": "^([^\\n]+)\\((\\d+)\\):\\s*([^\\n]*)",
+	"variants": [
+		{
+			"name": "CO File",
+			"cmd": ["asm8085", "-c", "$file"]
+		}
+	]
+}

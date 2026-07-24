@@ -1,0 +1,81 @@
+%YAML 1.2
+---
+name: asm8085 4
+file_extensions:
+  - asm
+  - s8085
+scope: source.8085
+contexts:
+  main:
+    - include: comments
+    - include: labels
+    - include: directives
+    - include: instructions
+    - include: registers
+    - include: numbers
+    - include: strings
+    - include: punctuation
+    - match: '\S+'
+      scope: source.8085
+
+  comments:
+    - match: ';.*$'
+      scope: comment.line.semicolon
+
+  labels:
+    - match: '^([A-Za-z_\.][\w\.]*):'
+      captures:
+        1: entity.name.function.8085
+
+  directives:
+    - match: '^\s*(include|incbin|org|db|dw|ds|equ|macro|endm|if|ifdef|ifndef|endif|pushd|popd|align|assert|pushorg|poporg|repeat|endr|end|cpu)\b'
+      captures:
+        1: storage.type.directive
+      ignore_case: true
+    - match: '\b(include|incbin|org|db|dw|ds|equ|macro|endm|if|ifdef|ifndef|endif|pushd|popd|align|assert|pushorg|poporg|repeat|endr|end|cpu)\b'
+      scope: storage.type.directive
+      ignore_case: true
+
+  # Start-of-statement mnemonic (handles optional leading label)
+  instructions:
+    - match: '^\s*(?:[A-Za-z_\.][\w\.]*:\s*)?(mov|mvi|lxi|lda|sta|lhld|shld|ldax|stax|xchg|add|adi|adc|aci|sub|sui|sbb|sbi|inr|dcr|inx|dcx|dad|daa|ana|ani|ora|ori|xra|xri|cmp|cpi|rlc|rrc|ral|rar|cma|cmc|stc|jmp|jnz|jz|jnc|jc|jpo|jpe|jp|jm|call|cnz|cz|cnc|cc|cpo|cpe|cp|cm|ret|rnz|rz|rnc|rc|rpo|rpe|rp|rm|rst|pchl|push|pop|xthl|sphl|in|out|ei|di|hlt|nop|dsub|arhl|rdel|rim|ldhi|sim|ldsi|rstv|shlx|jnk|lhlx|jk)\b(?=\s|,|:|\(|$)'
+      captures:
+        1: keyword.control.opcode.8085
+      ignore_case: true
+
+  registers:
+    - match: '\b(A|B|C|D|E|H|L|M|SP|PSW|BC|DE|HL)\b'
+      scope: variable.language
+      ignore_case: true
+
+  numbers:
+    - match: '\b0x[0-9A-Fa-f_]+\b'
+      scope: constant.numeric.hex
+    - match: '\b0b[01_]+\b'
+      scope: constant.numeric.binary
+    - match: '\b[0-9]+[Hh]\b'
+      scope: constant.numeric.hex
+    - match: '(?<!\w)[#\$][0-9A-Fa-f]+\b'
+      scope: constant.numeric.hex
+    - match: '\b-?[0-9]+\b'
+      scope: constant.numeric.decimal
+    - match: "'(?:\\\\.|[^'\\\\])+'"
+      scope: constant.character
+
+  strings:
+    - match: '"'
+      push: string_double
+
+  string_double:
+    - meta_scope: string.quoted.double
+    - match: '\\\\.'
+      scope: constant.character.escape
+    - match: '"'
+      pop: true
+    - match: '.'
+      scope: string.quoted.double
+
+  punctuation:
+    - match: '[:,\[\]\(\).]'
+      scope: punctuation.separator
+
