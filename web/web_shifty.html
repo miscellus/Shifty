@@ -317,6 +317,13 @@
             opacity: 0.4;
         }
 
+        .touch-controls-left {
+            display: none;
+            user-select: none;
+            -webkit-user-select: none;
+            opacity: 0.4;
+        }
+
         .touch-btn {
             background: var(--touch-bg);
             border: 2px solid var(--touch-border);
@@ -342,6 +349,12 @@
         .touch-btn.left { grid-area: left; }
         .touch-btn.right { grid-area: right; }
         .touch-btn.down { grid-area: down; }
+
+        .touch-btn.enter {
+            width: clamp(60px, 16vw, 85px);
+            height: clamp(60px, 16vw, 85px);
+            font-size: 1.5em;
+        }
 
         .hidden { display: none !important; }
 
@@ -378,6 +391,17 @@
                 bottom: 24px;
                 right: 24px;
                 z-index: 100;
+            }
+
+            .touch-controls-left {
+                display: flex;
+                position: fixed;
+                bottom: 24px;
+                left: 24px;
+                z-index: 100;
+                /* Match the height/alignment of the right-side grid */
+                align-items: flex-end;
+                padding-bottom: clamp(60px, 16vw, 85px);
             }
         }
     </style>
@@ -443,6 +467,10 @@
             </div>
 
         </div>
+    </div>
+
+    <div class="touch-controls-left">
+        <button class="touch-btn enter" data-row="6" data-col="7">↻</button>
     </div>
 
     <div class="touch-controls">

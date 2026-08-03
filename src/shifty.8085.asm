@@ -7,7 +7,8 @@ TargetNec equ 1
 ;
 PushableMask        equ 0b10000000 ; bit 7 of tile
 NeedsRedrawMask     equ 0b01000000 ; bit 6 of tile
-TileIndexMask       equ 0b00011111 ; bits 0-5 of tile
+ActiveTileMask      equ 0b00100000 ; bit 5 of tile
+TileIndexMask       equ 0b00011111 ; bits 0-4 of tile
 
 ; Direction encoding:
 ; bit 0: Axis (0: X, 1: Y)
@@ -197,6 +198,10 @@ PlayerMove:
 	push h
 	inr b ; increment position count
 
+	; mov a, m
+	; ori ActiveTileMask | NeedsRedrawMask
+	; mov m, a
+
 	; ; If the pushable is a stone, then store the stack index of the stone
 	; ; This stack index will be used when we encounter a hole.
 	; inx h
@@ -261,6 +266,9 @@ PlayerMove:
 	jnc .perpArrowSearchLoop ; Keep searching, this arrow is pointing along current movement axis, we need to find a perpendicular arrow
 
 	; The found arrow is perpendicular
+	mov a, m
+	ori ActiveTileMask | NeedsRedrawMask
+	mov m, a
 
 	; Before updating the search direction, we first push a
 	; "revert search direction"-word to the stack
@@ -284,6 +292,10 @@ PlayerMove:
 .cancelMove:
 	; Cancel the move, since we found a solid
 	; Unwind the stack
+	mov a, m
+	ani ~(ActiveTileMask | NeedsRedrawMask)
+	mov m, a
+
 	pop h
 	dcr b
 	jnz .cancelMove
@@ -314,6 +326,7 @@ PlayerMove:
 	; Write from closest pos [DE] to furthest pos [HL]
 	ldax d
 	ori NeedsRedrawMask
+	ani ~ActiveTileMask
 	mov m, a
 
 	xchg ; [HL] = closest tile from player
@@ -537,26 +550,40 @@ Draw:
 	mvi e, 0 ; [E] = Y = 0
 .drawLevelCols:
 
-	mov a, m ; [A] Tile Info
+	mov a, m
+	mov c, a ; [C] = Tile Info
 	rlc
 	rlc
 	jnc .continue
 
-	rrc
-	rrc
+	mov a, c
+	mvi b, 0
+	ani ActiveTileMask
+	jz .drawTileNotActive
+	dcr b
+.drawTileNotActive:
+
+	; rlc
+	; mvi a, 0
+	; sbb a
+	; mov b, a ; [B] = 0xFF if ActiveTileMask, 0 otherwise
+
+	mov a, c
 	ani TileIndexMask
 
 	push h ; Save level offset
 	  call TilePtrFromIndex
-	  mov b, h
-	  mov c, l ; [BC] = TileIndex * 10
-
-	  lxi h, Tiles
-	  dad b
+	  mvi a, low(Tiles)
+	  add l
+	  mov l, a
+	  mvi a, high(Tiles)
+	  adc h
+	  mov h, a
 	  ; [D] = X
 	  ; [E] = Y
 	  ; [HL] = TileOffset = Tiles + TileIndex
 	  ; lxi h, TileWallBrick
+	  ; [B] = 0xFF if ActiveTileMask, 0 otherwise
 	  call DrawTile
 	pop h ; restore level offset
 
@@ -660,6 +687,7 @@ TilePtrFromIndex:
 	; [A] = tile_index
 	; <- [HL] = Tiles + tile_index * 10
 	; <- [BC] = TileIndex * 2
+	push b
 	mvi h, 0
 	mov l, a ; [HL] = TileIndex
 	dad h ; * 2
@@ -668,6 +696,7 @@ TilePtrFromIndex:
 	dad h ; * 4
 	dad h ; * 8
 	dad b ; [HL] = TileIndex * 8 + TileIndex * 2 = TileIndex * 10
+	pop b
 	ret
 
 DrawTile:
@@ -676,16 +705,17 @@ DrawTile:
 ; [E] = Tile Y [0;  7]
 	push h
 	push d
-	push b
 	push psw
 
-	push h
-	call LcdGetBlockMask
-	call LcdSelectBlock
-	pop h
-	call LcdCalcPageAndOffset
-	call LcdWaitReady
-	out PortLcdCmd ; Set page and offset
+	push b
+	  push h
+	    call LcdGetBlockMask
+	    call LcdSelectBlock
+	  pop h
+	  call LcdCalcPageAndOffset
+	  call LcdWaitReady
+	  out PortLcdCmd ; Set page and offset
+	pop b
 
 	mvi c, 10
 .WriteColumns:
@@ -693,13 +723,13 @@ DrawTile:
 	rlc ; shift busy bit out into carry bit
 	jc .WriteColumns ; If cary set, LCD is busy, so keep looping
 	mov a, m
+	xra b
 	out PortLcdData ; Write column to LCD memory
 	inx h
 	dcr c
 	jnz .WriteColumns
 
 	pop psw
-	pop b
 	pop d
 	pop h
 	ret
