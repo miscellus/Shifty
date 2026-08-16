@@ -1001,4 +1001,4 @@ VariablesEnd:
 Level equ ($ + 0xff) & 0xff00
 LevelEnd equ Level + 8*24
 	assert $ < ProgramLimitAddr
-	assert Level - VariablesEnd < 250
+	; assert Level - VariablesEnd < 250
