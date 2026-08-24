@@ -306,6 +306,21 @@ PlayerMove:
 .performMove:
 	; [HL] = furthest tile from player
 
+	; write "Start of undo event"-sentinel
+	push h
+	  lxi h, UndoBufferFront
+	  mov a, m
+	  inr m
+	  lxi h, UndoBuffer
+	  add l
+	  mov l, a
+	  mvi a, 0
+	  adc h
+	  mov h, a
+	  mvi m, 0xFF ; Write the sentinel
+	  ; TODO(jkk): What if we overlap UndoBufferFront now?
+	pop h
+
 	; Check if we are moving the player this iteration (B=1).
 	; If B=1, DE currently holds the target coordinates for the player.
 	mov a, b
@@ -324,10 +339,70 @@ PlayerMove:
 	; [HL] = furthest tile from player
 
 	; Write from closest pos [DE] to furthest pos [HL]
-	ldax d
+	ldax d ; [A] = closest tile
+	mov c, m ; [C] = furthest tile (overwritten)
+	cmp c
+	jz .performMoveSkipSameTile ; Skip writing tile that didn't change
+	; Save for undo
+	; TODO(jkk): compress undo info
+	  push psw
+	  push d
+	  push h
+
+	  mov d, l ; [D] = tile pos
+	  ; [C] = tile info
+
+	  lxi h, UndoBufferFront
+	  mov a, m
+	  inr a
+	  inr a
+	  mov m, a ; Increment undo buffer front
+	  lxi h, UndoBuffer - 2 ; -2 is to account for the fact that we pre-incremented the UndoBufferFront index
+	                        ; dcr a     We now don't need to do this
+	                        ; dcr a
+	  add l
+	  mov l, a
+	  mvi a, 0
+	  adc h
+	  mov h, a
+	  mov m, d ; tile pos first
+	  inx h
+	  mov m, c ; then tile
+	  inx h
+
+	  xchg ; [DE] = UndoBufferFrontPtr
+	  lxi h, UndoBufferFront
+	  lda UndoBufferBack
+	  cmp m ; flags from (UndoBufferFront - UndoBufferBack)
+	  jnz .performMoveUndoBufferHasSpace
+
+	  ; Front == Back, so UndoBuffer is full, we must eat the oldest undo event until we read the next FF sentinel
+	  xchg     ; [HL] = UndoBufferBackPtr (same as UndoBufferFrontPtr since Front == Back)
+	  mov d, a ; [D]  = UndoBufferBack (index into UndoBuffer)
+
+	  ; This loop looks for the FF "start of undo event"-sentinel
+	  mvi a, 0xff ; IMPORTANT(jkk): this relies on the fact that no
+	              ; tile info is exactly 0xFF, if that assumption is ever broken,
+	              ; this will stop working in a tricky to debug way ]^:|
+.performMoveUndoBufferIsFullLoop:
+	  inr d ; [D] = UndoBufferBack (keep it updated)
+	  inx h
+	  cmp m
+	  jnz .performMoveUndoBufferIsFullLoop
+
+	  ; Write back the new UndoBufferBack
+	  mov a, d
+	  sta UndoBufferBack
+
+.performMoveUndoBufferHasSpace:
+	  pop h
+	  pop d
+	  pop psw
 	ori NeedsRedrawMask
 	ani ~ActiveTileMask
 	mov m, a
+
+.performMoveSkipSameTile:
 
 	xchg ; [HL] = closest tile from player
 
@@ -991,6 +1066,10 @@ CurrentLevelIndex: ds 1
 
 KeyboardRow6Down: ds 1
 KeyboardRow6Pressed: ds 1
+
+UndoBufferBack: ds 1
+UndoBufferFront: ds 1
+UndoBuffer: ds 256
 
 VariablesEnd:
 
