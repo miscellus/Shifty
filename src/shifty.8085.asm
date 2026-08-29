@@ -304,22 +304,10 @@ PlayerMove:
 	ret
 
 .performMove:
+	mov a, b
+	sta UndoEntryCount ; Save original count
+.performMoveLoop:
 	; [HL] = furthest tile from player
-
-	; write "Start of undo event"-sentinel
-	push h
-	  lxi h, UndoBufferFront
-	  mov a, m
-	  inr m
-	  lxi h, UndoBuffer
-	  add l
-	  mov l, a
-	  mvi a, 0
-	  adc h
-	  mov h, a
-	  mvi m, 0xFF ; Write the sentinel
-	  ; TODO(jkk): What if we overlap UndoBufferFront now?
-	pop h
 
 	; Check if we are moving the player this iteration (B=1).
 	; If B=1, DE currently holds the target coordinates for the player.
@@ -333,8 +321,14 @@ PlayerMove:
 	pop d
 	mov a, d
 	cpi 0xFF ; Detect search direction sentinel
-	jz .performMoveDecrementAndLoop
+	jnz .notSentinel
 
+	lda UndoEntryCount
+	dcr a
+	sta UndoEntryCount
+
+	jmp .performMoveDecrementAndLoop
+.notSentinel:
 	; [DE] = closest tile from player (from the stack)
 	; [HL] = furthest tile from player
 
@@ -342,83 +336,83 @@ PlayerMove:
 	ldax d ; [A] = closest tile
 	mov c, m ; [C] = furthest tile (overwritten)
 	cmp c
-	jz .performMoveSkipSameTile ; Skip writing tile that didn't change
-	; Save for undo
-	; TODO(jkk): compress undo info
-	  push psw
-	  push d
-	  push h
+	jz .tileDidntChange ; Skip writing tile that didn't change
 
-	  mov d, l ; [D] = tile pos
-	  ; [C] = tile info
+	call UndoBufferWriteEntry
 
-	  lxi h, UndoBufferFront
-	  mov a, m
-	  inr a
-	  inr a
-	  mov m, a ; Increment undo buffer front
-	  lxi h, UndoBuffer - 2 ; -2 is to account for the fact that we pre-incremented the UndoBufferFront index
-	                        ; dcr a     We now don't need to do this
-	                        ; dcr a
-	  add l
-	  mov l, a
-	  mvi a, 0
-	  adc h
-	  mov h, a
-	  mov m, d ; tile pos first
-	  inx h
-	  mov m, c ; then tile
-	  inx h
-
-	  xchg ; [DE] = UndoBufferFrontPtr
-	  lxi h, UndoBufferFront
-	  lda UndoBufferBack
-	  cmp m ; flags from (UndoBufferFront - UndoBufferBack)
-	  jnz .performMoveUndoBufferHasSpace
-
-	  ; Front == Back, so UndoBuffer is full, we must eat the oldest undo event until we read the next FF sentinel
-	  xchg     ; [HL] = UndoBufferBackPtr (same as UndoBufferFrontPtr since Front == Back)
-	  mov d, a ; [D]  = UndoBufferBack (index into UndoBuffer)
-
-	  ; This loop looks for the FF "start of undo event"-sentinel
-	  mvi a, 0xff ; IMPORTANT(jkk): this relies on the fact that no
-	              ; tile info is exactly 0xFF, if that assumption is ever broken,
-	              ; this will stop working in a tricky to debug way ]^:|
-.performMoveUndoBufferIsFullLoop:
-	  inr d ; [D] = UndoBufferBack (keep it updated)
-	  inx h
-	  cmp m
-	  jnz .performMoveUndoBufferIsFullLoop
-
-	  ; Write back the new UndoBufferBack
-	  mov a, d
-	  sta UndoBufferBack
-
-.performMoveUndoBufferHasSpace:
-	  pop h
-	  pop d
-	  pop psw
 	ori NeedsRedrawMask
 	ani ~ActiveTileMask
 	mov m, a
+	jmp .afterTileDidntChange
 
-.performMoveSkipSameTile:
+.tileDidntChange:
+
+	lda UndoEntryCount
+	dcr a
+	sta UndoEntryCount
+
+.afterTileDidntChange:
 
 	xchg ; [HL] = closest tile from player
 
 .performMoveDecrementAndLoop:
 	; Decrement and loop until B hits 0
 	dcr b
-	jnz .performMove
+	jnz .performMoveLoop
 
 	; [HL] = original player position before the move
 	; Clear foreground tile on the starting position, the player just moved away from this tile.
 	;xchg ; [HL] = losest tile from player
+	mov c, m ; [C] = furthest tile (overwritten)
+	call UndoBufferWriteEntry
 	mvi m, TileEmpty_Index | NeedsRedrawMask
+
+	push h
+	  lda UndoBufferAt
+	  mvi h, high(UndoBuffer)
+	  mov l, a
+	  lda UndoEntryCount
+	  inr a
+	  mov m, a
+	  inr l
+	  mvi m, 0xff ; sentinel
+	  inr l
+	  mov a, l
+	  sta UndoBufferAt
+	pop h
 
 	ora a ; clear carry bit to indicate that the move was performed successfully
 	ret
 
+UndoBufferWriteEntry:
+; [L] = Tile position
+; [C] = Tile Info
+; Clobbers: None
+	; TODO(jkk): compress undo info
+	push psw
+	push b
+	push d
+	push h
+
+	mov d, l ; [D] = tile pos
+
+	mvi h, high(UndoBuffer)
+	lda UndoBufferAt
+	mov l, a
+
+	mov m, d ; tile pos first
+	inr l
+	mov m, c ; then tile
+	inr l
+
+	mov a, l
+	sta UndoBufferAt
+
+	pop h
+	pop d
+	pop b
+	pop psw
+	ret
 
 RemoveGoal:
 	push h
@@ -451,7 +445,7 @@ RemoveGoal:
 
 ReadInput:
 ; Output:
-;  [B], [A] = KeyUp | KeyDown | KeyLeft | KeyRight
+;  [B], [A] = KeyUp | KeyDown | KeyLeft | KeyRight | KeyRestartLevel | KeyUndo
 ;  flags set according to ANI
 	lda KeyboardRow6Down
 	cma
@@ -491,6 +485,15 @@ ReadInput:
 .downNotPressed:
 
 	mov a, b ; restore pressed
+	ani KeyUndo
+	jz .undoNotPressed
+	call Undo
+	call Draw
+	stc
+	ret
+.undoNotPressed:
+
+	mov a, b ; restore pressed
 	ani KeyRestartLevel
 	lda CurrentLevelIndex
 	jz .restartLevelNotPressed
@@ -499,6 +502,7 @@ ReadInput:
 	stc
 	ret
 .restartLevelNotPressed:
+
 	mov a, c
 	sta PlayerMoveDir
 
@@ -581,6 +585,59 @@ LoadLevel:
 	mov a, m
 	sta MissingTargets
 
+	ret
+
+
+Undo:
+	push b
+	push d
+	push h
+
+	lda UndoBufferAt
+	mvi h, high(UndoBuffer)
+	mov l, a
+
+	dcr l
+	mov a, m
+	cpi 0xff
+	jnz .end ; Undo buffer empty
+
+	; [HL] = UndoBufferAt
+	dcr l
+	mov c, m ; [C] = entry count
+
+	mvi d, high(Level)
+.undoLoop:
+	dcr l
+	mov a, m ; [B] = tile info
+	ori NeedsRedrawMask
+	dcr l
+	mov e, m ; [E] = tile pos
+
+	; Identify the un-done player position
+	mov b, a
+	ani TileIndexMask
+	xri TileBoxKidRight_Index
+	cpi 4
+	jnc .notThePlayer
+
+	mov a, e ; [A] = tile pos
+	sta PlayerPos
+
+.notThePlayer:
+	mov a, b
+	stax d ; Restores the tile from the undo
+
+	dcr c
+	jnz .undoLoop
+
+	mov a, l
+	sta UndoBufferAt
+
+.end:
+	pop h
+	pop d
+	pop b
 	ret
 
 ShowTitle:
@@ -715,6 +772,7 @@ CheckStopKey:
 	ret
 
 	ifdef TargetNec
+KeyUndo equ (1 << 0)
 KeyUp    equ (1 << 1)
 KeyDown  equ (1 << 2)
 KeyLeft  equ (1 << 3)
@@ -722,6 +780,7 @@ KeyRight equ (1 << 4)
 KeyRestartLevel equ (1 << 7)
 	endif
 	ifdef TargetT100
+KeyUndo equ ???
 KeyUp    equ (1 << 6)
 KeyDown  equ (1 << 7)
 KeyLeft  equ (1 << 4)
@@ -1067,10 +1126,6 @@ CurrentLevelIndex: ds 1
 KeyboardRow6Down: ds 1
 KeyboardRow6Pressed: ds 1
 
-UndoBufferBack: ds 1
-UndoBufferFront: ds 1
-UndoBuffer: ds 256
-
 VariablesEnd:
 
 ; Align level to 256 offset
@@ -1079,5 +1134,11 @@ VariablesEnd:
 ; bits of the tile address.
 Level equ ($ + 0xff) & 0xff00
 LevelEnd equ Level + 8*24
-	assert $ < ProgramLimitAddr
+
+UndoEntryCount equ Level + 0x100 - 2 ; Just to have two distinctive states that alternate every move so we know how many tile changes constitute a single undo event.
+UndoBufferAt equ Level + 0x100 - 1
+UndoBuffer equ Level + 0x100
+UndoBufferEnd equ UndoBuffer + 0x100
+
+	assert UndoBufferEnd < ProgramLimitAddr
 	; assert Level - VariablesEnd < 250
