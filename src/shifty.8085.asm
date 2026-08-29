@@ -185,7 +185,9 @@ Move_FoundHole:
 
 	; [HL] = current tile (the hole)
 	; [DE] = head tile
+	call Undo_SaveTile
 	xchg
+	call Undo_SaveTile
 	mvi a, TileEmpty_Index | NeedsRedrawMask
 	mov m, a
 	stax d
@@ -213,7 +215,7 @@ Move_FoundSolid:
 .perpArrowSearchLoop:
 	pop h
 	dcr b
-	jz SetCarryAndReturn
+	jz SetCarryAndReturn ; TODO(jkk): Get rid of any highlight added to perp-arrows
 
 	; We must check if this is a real position or a search direction change
 	mov a, h
@@ -288,9 +290,6 @@ SetCarryAndReturn:
 	ret
 
 Move_Perform:
-	mov a, b
-	sta UndoEntryCount ; Save original count
-.performMoveLoop:
 	; [HL] = furthest tile from player
 
 	; Check if we are moving the player this iteration (B=1).
@@ -305,14 +304,8 @@ Move_Perform:
 	pop d
 	mov a, d
 	cpi 0xFF ; Detect search direction sentinel
-	jnz .notSentinel
+	jz .decrementAndLoop
 
-	lda UndoEntryCount
-	dcr a
-	sta UndoEntryCount
-
-	jmp .performMoveDecrementAndLoop
-.notSentinel:
 	; [DE] = closest tile from player (from the stack)
 	; [HL] = furthest tile from player
 
@@ -322,63 +315,57 @@ Move_Perform:
 	cmp c
 	jz .tileDidntChange ; Skip writing tile that didn't change
 
-	call UndoBufferWriteEntry
+	call Undo_SaveTile
 
 	ori NeedsRedrawMask
 	ani ~ActiveTileMask
 	mov m, a
-	jmp .afterTileDidntChange
 
 .tileDidntChange:
-
-	lda UndoEntryCount
-	dcr a
-	sta UndoEntryCount
-
-.afterTileDidntChange:
-
 	xchg ; [HL] = closest tile from player
 
-.performMoveDecrementAndLoop:
+.decrementAndLoop:
 	; Decrement and loop until B hits 0
 	dcr b
-	jnz .performMoveLoop
+	jnz Move_Perform
 
 	; [HL] = original player position before the move
 	; Clear foreground tile on the starting position, the player just moved away from this tile.
 	;xchg ; [HL] = losest tile from player
-	mov c, m ; [C] = furthest tile (overwritten)
-	call UndoBufferWriteEntry
+	call Undo_SaveTile
 	mvi m, TileEmpty_Index | NeedsRedrawMask
 
-	push h
-	  lda UndoBufferAt
-	  mvi h, high(UndoBuffer)
-	  mov l, a
-	  lda UndoEntryCount
-	  inr a
-	  mov m, a
-	  inr l
-	  mvi m, 0xff ; sentinel
-	  inr l
-	  mov a, l
-	  sta UndoBufferAt
-	pop h
+	call Undo_EndMove
 
 	ora a ; clear carry bit to indicate that the move was performed successfully
 	ret
 
-UndoBufferWriteEntry:
+Undo_EndMove:
+	push h
+	lda UndoBufferAt
+	mvi h, high(UndoBuffer)
+	mov l, a
+	lda UndoEntryCount
+	mov m, a
+	inr l
+	mvi m, 0xff ; sentinel
+	inr l
+	mov a, l
+	sta UndoBufferAt
+	lxi h, UndoEntryCount
+	mvi m, 0
+	pop h
+	ret
+
+Undo_SaveTile:
 ; [L] = Tile position
-; [C] = Tile Info
 ; Clobbers: None
-	; TODO(jkk): compress undo info
 	push psw
-	push b
 	push d
 	push h
 
-	mov d, l ; [D] = tile pos
+	mov d, l ; [d] = tile pos
+	mov e, m ; [e] = tile info
 
 	mvi h, high(UndoBuffer)
 	lda UndoBufferAt
@@ -386,19 +373,22 @@ UndoBufferWriteEntry:
 
 	mov m, d ; tile pos first
 	inr l
-	mov m, c ; then tile
+	mov m, e ; then tile
 	inr l
 
 	mov a, l
 	sta UndoBufferAt
 
+	lxi h, UndoEntryCount
+	inr m
+
 	pop h
 	pop d
-	pop b
 	pop psw
 	ret
 
 RemoveGoal:
+	call Undo_SaveTile
 	push h
 	mvi a, TileEmpty_Index
 	mov m, a
@@ -415,6 +405,7 @@ RemoveGoal:
 	cpi TileDoorClosed_Index
 	jnz .notClosedDoor
 	; Open the closed door
+	call Undo_SaveTile
 	mvi m, TileDoorOpen_Index | NeedsRedrawMask
 .notClosedDoor:
 	mov a, l
@@ -593,7 +584,16 @@ Undo:
 	mvi d, high(Level)
 .undoLoop:
 	dcr l
-	mov a, m ; [B] = tile info
+	mov b, m ; [B] = tile info
+	mov a, b
+	ani TileIndexMask
+	cpi TileGoal_Index
+	jnz .notTarget
+	  lda MissingTargets
+	  inr a
+	  sta MissingTargets
+.notTarget:
+	mov a, b
 	ori NeedsRedrawMask
 	dcr l
 	mov e, m ; [E] = tile pos
@@ -1125,4 +1125,4 @@ UndoBuffer equ Level + 0x100
 UndoBufferEnd equ UndoBuffer + 0x100
 
 	assert UndoBufferEnd < ProgramLimitAddr
-	; assert Level - VariablesEnd < 250
+	; assert Level - VariablesEnd < 36

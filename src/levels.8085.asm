@@ -6,20 +6,21 @@
 LevelLookupTable:
 ; Maps Level Index -> Pointer to Level Data
 ;-------------------------------------------------------------------------------
-    dw LeveL_Entrance ; Level 0
-    dw LeveL_Hub_0 ; Level 1
-    dw Level_ArrowIntro_10 ; Level 2
-    dw Level_ArrowIntro_20 ; Level 3
-    dw Level_ArrowIntro_30 ; Level 4
-    dw Level_ArrowIntro_40 ; Level 5
-    dw Level_ZigZag ; Level 6
-    dw Level_Buffalo ; Level 7
-    dw Level_Snake ; Level 8
-    dw Level_Key ; Level 9
-    dw Level_TheLockLight ; Level 10
-    dw Level_Pyramid ; Level 11
-    dw Level_TheLock ; Level 12
-    dw Level_End ; Level 13
+    dw Test ; Level 0
+    dw LeveL_Entrance ; Level 1
+    dw LeveL_Hub_0 ; Level 2
+    dw Level_ArrowIntro_10 ; Level 3
+    dw Level_ArrowIntro_20 ; Level 4
+    dw Level_ArrowIntro_30 ; Level 5
+    dw Level_ArrowIntro_40 ; Level 6
+    dw Level_ZigZag ; Level 7
+    dw Level_Buffalo ; Level 8
+    dw Level_Snake ; Level 9
+    dw Level_Key ; Level 10
+    dw Level_TheLockLight ; Level 11
+    dw Level_Pyramid ; Level 12
+    dw Level_TheLock ; Level 13
+    dw Level_End ; Level 14
 
 ;-------------------------------------------------------------------------------
 TileInfoFromTileIndexMap:
@@ -57,6 +58,19 @@ TileInfoFromTileIndexMap:
     db 0b01011101 ; 
     db 0b01011110 ; 
     db 0b01011111 ; 
+
+;-------------------------------------------------------------------------------
+Test:
+;-------------------------------------------------------------------------------
+.TileData:
+    db 0xe0, 0xe0, 0xe0, 0x40, 0x0f, 0xc0, 0x0f, 0x03, 0x80, 0x03, 0x06, 0x05
+    db 0xc0, 0x0f, 0x60, 0x01, 0x2f, 0x0b, 0x02, 0x03, 0x80, 0x04, 0xc0, 0x04
+    db 0xc0, 0x04, 0xe0, 0xe0, 0xe0, 0xe0, 0xe0, 0x80, 0x6d, 0xe0, 0xe0, 0xe0
+    db 0xe0, 0xe0, 0xe0, 0xe0, 0x20
+
+.PlayerPos: db 0o074
+
+.NumGoals: db 1
 
 ;-------------------------------------------------------------------------------
 LeveL_Entrance:
