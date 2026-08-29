@@ -560,8 +560,17 @@ LoadLevel:
 	mov a, m
 	sta MissingTargets
 
+Undo_Clear:
+	push h
+	xra a
+	assert low(UndoBuffer) == 0
+	lxi h, UndoBuffer
+.loop:
+	mov m, a
+	dcr l
+	jnz .loop
+	pop h
 	ret
-
 
 Undo:
 	push b
