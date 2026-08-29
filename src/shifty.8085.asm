@@ -88,8 +88,6 @@ PlayerMove:
 ; [C] = Direction (0 -> right, 1 -> up, 2 -> right, 3 -> down)
 ; This procedure pushes the pushable positions to the stack
 ; -> [A] = the number of positions pushed to the stack
-	; xra a
-	; sta PlayerMoveStoneStackIndex
 
 	lda PlayerPos
 	mvi h, high(Level)
@@ -97,34 +95,34 @@ PlayerMove:
 
 	push h ; push our initial position
 	mvi b, 1 ; our initial position count is 1
-.loop:
+Move_SearchLoop:
 	lda PlayerMoveDir
 	; mov a, c ; [A] = direction
 	call TryGetNeigborAddr
-	jc .foundSolid ; return with carry out of bounds and the move should be cancelled
+	jc Move_FoundSolid ; return with carry out of bounds and the move should be cancelled
 
 	; call TileAddressFromPos
 	mov a, m
 
 	; Check for pushables
 	cpi PushableMask
-	jnc .foundPushable
+	jnc Move_FoundPushable
 
 	ani TileIndexMask
 
 	; Check for wall
 	cpi TileWallBrick_Index
-	jz .foundSolid
+	jz Move_FoundSolid
 
 	cpi TileDoorClosed_Index
-	jz .foundSolid
+	jz Move_FoundSolid
 
 	cpi TileDoorOpen_Index
-	jz .foundOpenDoor
+	jz Move_FoundOpenDoor
 
 	; Check for hole
 	cpi TileHole_Index
-	jz .foundHole
+	jz Move_FoundHole
 
 	; If goal acted as a "pickup"
 	; cpi TileGoal_Index
@@ -133,15 +131,15 @@ PlayerMove:
 	; Block the move if search has looped around and is trying to push into current player position
 	xri TileBoxKidRight_Index
 	cpi 4
-	jc .foundSolid
+	jc Move_FoundSolid
 
 	; Assume we found empty
-	jmp .performMove
+	jmp Move_Perform
 
-.foundOpenDoor:
+Move_FoundOpenDoor:
 	mov a, b
 	cpi 1
-	jnz .foundSolid
+	jnz Move_FoundSolid
 
 	; TODO(jkk): What if we have the following?
 	; ..###    ..###
@@ -157,7 +155,7 @@ PlayerMove:
 	ret
 
 
-.foundHole:
+Move_FoundHole:
 	; First we must find the head pushable tile.
 	; Because the train of pushables could have turns signified by 0xFF sentinels,
 	; we need to keep popping the stack as long as the top is a 0xFF turn sentinel.
@@ -166,7 +164,7 @@ PlayerMove:
 	; We need to follow the arrows
 	pop d
 	dcr b
-	jz .returnMoveBlocked
+	jz SetCarryAndReturn
 	mov a, d
 	cpi 0xff
 	jz .skipDirectionChangeSentinelsLoop
@@ -176,7 +174,7 @@ PlayerMove:
 
 	ldax d
 	ora a
-	jp .cancelMove ; If bit 7 (sign bit) is 0, head is _NOT_ pushable, so cancel move
+	jp Move_Cancel ; If bit 7 (sign bit) is 0, head is _NOT_ pushable, so cancel move
 
 	; Head was a pushable, so it should go in the hole (remove both)
 
@@ -191,29 +189,15 @@ PlayerMove:
 	mvi a, TileEmpty_Index | NeedsRedrawMask
 	mov m, a
 	stax d
-	jmp .performMove
+	jmp Move_Perform
 
-.foundPushable:
+Move_FoundPushable:
 	; it's a pushable, so push it (^;
 	push h
 	inr b ; increment position count
+	jmp Move_SearchLoop
 
-	; mov a, m
-	; ori ActiveTileMask | NeedsRedrawMask
-	; mov m, a
-
-	; ; If the pushable is a stone, then store the stack index of the stone
-	; ; This stack index will be used when we encounter a hole.
-	; inx h
-	; mov a, m
-	; ani TileIndexMask
-	; cpi TileCrateStone_Index
-	; jnz .loop
-	;   mov a, b
-	;   sta PlayerMoveStoneStackIndex
-	jmp .loop
-
-.foundSolid:
+Move_FoundSolid:
 	; Go backwards through the stack and find the first arrow pointing
 	; at a right angle to the current direction of movement.
 	; If such a perpendicular arrow is found:
@@ -229,7 +213,7 @@ PlayerMove:
 .perpArrowSearchLoop:
 	pop h
 	dcr b
-	jz .returnMoveBlocked
+	jz SetCarryAndReturn
 
 	; We must check if this is a real position or a search direction change
 	mov a, h
@@ -246,10 +230,10 @@ PlayerMove:
 
 	; Test for goal
 	cpi TileGoal_Index
-	jnz .foundSolid_notGoal
+	jnz .notGoal
 	  call RemoveGoal
-	  jmp .performMove
-.foundSolid_notGoal:
+	  jmp Move_Perform
+.notGoal:
 
 	xri TileRightArrow_Index
 	cpi 4
@@ -287,9 +271,9 @@ PlayerMove:
 	mov a, c ; [A] = Arrow direction/
 	sta PlayerMoveDir
 
-	jmp .loop ; Continue main loop
+	jmp Move_SearchLoop ; Continue main loop
 
-.cancelMove:
+Move_Cancel:
 	; Cancel the move, since we found a solid
 	; Unwind the stack
 	mov a, m
@@ -298,12 +282,12 @@ PlayerMove:
 
 	pop h
 	dcr b
-	jnz .cancelMove
-.returnMoveBlocked:
+	jnz Move_Cancel
+SetCarryAndReturn:
 	stc ; return with carry to indicate that the move was blocked
 	ret
 
-.performMove:
+Move_Perform:
 	mov a, b
 	sta UndoEntryCount ; Save original count
 .performMoveLoop:
