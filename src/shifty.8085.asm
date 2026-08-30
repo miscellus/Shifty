@@ -124,10 +124,6 @@ Move_SearchLoop:
 	cpi TileHole_Index
 	jz Move_FoundHole
 
-	; If goal acted as a "pickup"
-	; cpi TileGoal_Index
-	; jz .foundGoal
-
 	; Block the move if search has looped around and is trying to push into current player position
 	xri TileBoxKidRight_Index
 	cpi 4
@@ -335,13 +331,15 @@ Move_Perform:
 	call Undo_SaveTile
 	mvi m, TileEmpty_Index | NeedsRedrawMask
 
-	call Undo_EndMove
+	call Undo_EndMoveRecord
 
 	ora a ; clear carry bit to indicate that the move was performed successfully
 	ret
 
-Undo_EndMove:
+Undo_EndMoveRecord:
+	push b
 	push h
+
 	lda UndoBufferAt
 	mvi h, high(UndoBuffer)
 	mov l, a
@@ -352,9 +350,42 @@ Undo_EndMove:
 	inr l
 	mov a, l
 	sta UndoBufferAt
+
+	; Search ahead to see if we truncated the oldest move record,
+	; and if we did, disable that move record by clearing the FF sentinel
+	mvi c, 0 ; [C] = search distance
+	mov a, m
+.searchSentinel:
+	cpi 0xff
+	jz .foundSentinel
+	inr c
+	jz .oldestRecordNotTruncated
+	inr l
+	mov a, m
+	jmp .searchSentinel
+
+.foundSentinel:
+	; [L] points at oldest move record sentinel
+	dcr l
+	; [L] points at oldest move record entry count
+
+	; If oldest move record entry count exceeds the search distance
+	mov a, m
+	add a ; *2 to get byte count
+	cmp c
+	jc .oldestRecordNotTruncated
+
+	; The oldest record has been truncated, so we must clear its
+	; sentinel to 0 to disable it.
+	inr l
+	mvi m, 0
+
+.oldestRecordNotTruncated:
 	lxi h, UndoEntryCount
 	mvi m, 0
+
 	pop h
+	pop b
 	ret
 
 Undo_SaveTile:
@@ -551,18 +582,13 @@ LoadLevel:
 	cpi low(LevelEnd)
 	jnz .readCompressed
 
-	; [HL] = Points at player starting position for level
-	mov a, m
-	sta PlayerPos
-
-	; [HL] = Points at number of targets in level
-	inx h
-	mov a, m
-	sta MissingTargets
+	call InitLevelVariables
 
 Undo_Clear:
 	push h
 	xra a
+	sta UndoEntryCount
+	sta UndoBufferAt
 	assert low(UndoBuffer) == 0
 	lxi h, UndoBuffer
 .loop:
@@ -570,6 +596,43 @@ Undo_Clear:
 	dcr l
 	jnz .loop
 	pop h
+	ret
+
+InitLevelVariables:
+; Scans the loaded level and sets the following variables:
+; - PlayerPos
+; - MissingTargets
+	push b
+	push h
+	assert low(Level) == 0
+	mvi h, high(Level)
+	xra a
+	mov l, a
+	mov c, a
+.loop:
+	mov a, m
+	inr l
+	jz .end
+
+	ani TileIndexMask
+	cpi TileGoal_Index
+	jnz .notTarget
+	  inr c
+.notTarget:
+	xri TileBoxKidRight_Index
+	cpi 4
+	jnc .notThePlayer
+	  mov a, l
+	  dcr a
+	  sta PlayerPos
+.notThePlayer:
+	jmp .loop
+.end:
+	mov a, c
+	sta MissingTargets
+
+	pop h
+	pop b
 	ret
 
 Undo:
@@ -586,6 +649,8 @@ Undo:
 	cpi 0xff
 	jnz .end ; Undo buffer empty
 
+	mvi m, 0 ; Clear move record being un-done
+
 	; [HL] = UndoBufferAt
 	dcr l
 	mov c, m ; [C] = entry count
@@ -593,32 +658,10 @@ Undo:
 	mvi d, high(Level)
 .undoLoop:
 	dcr l
-	mov b, m ; [B] = tile info
-	mov a, b
-	ani TileIndexMask
-	cpi TileGoal_Index
-	jnz .notTarget
-	  lda MissingTargets
-	  inr a
-	  sta MissingTargets
-.notTarget:
-	mov a, b
+	mov a, m ; [A] = tile info
 	ori NeedsRedrawMask
 	dcr l
 	mov e, m ; [E] = tile pos
-
-	; Identify the un-done player position
-	mov b, a
-	ani TileIndexMask
-	xri TileBoxKidRight_Index
-	cpi 4
-	jnc .notThePlayer
-
-	mov a, e ; [A] = tile pos
-	sta PlayerPos
-
-.notThePlayer:
-	mov a, b
 	stax d ; Restores the tile from the undo
 
 	dcr c
@@ -626,6 +669,8 @@ Undo:
 
 	mov a, l
 	sta UndoBufferAt
+
+	call InitLevelVariables
 
 .end:
 	pop h

@@ -101,8 +101,6 @@ def main():
     for name, rows in levels:
         out.append(";-------------------------------------------------------------------------------")
         out.append(f"{name}:")
-        out.append(";-------------------------------------------------------------------------------")
-        out.append(".TileData:")
 
         compressed_bytes = []
         px, py = None, None
@@ -151,19 +149,10 @@ def main():
         for j in range(0, len(compressed_bytes), 12):
             chunk = compressed_bytes[j:j+12]
             out.append("    db " + ", ".join(f"0x{b:02x}" for b in chunk))
+        out.append("")
 
         if px is None or py is None:
             raise ValueError(f"Player is missing from level {name}")
-
-        player_pos_packed = (px << 3) | py
-
-        out.append("")
-        if px is not None:
-            out.append(f".PlayerPos: db 0o{player_pos_packed:03o}")
-            out.append("")
-
-        out.append(f".NumGoals: db {num_goals}")
-        out.append("")
 
     # Write to disk
     args.output.write_text("\n".join(out), encoding="utf-8")
