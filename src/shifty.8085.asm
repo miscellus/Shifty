@@ -453,14 +453,30 @@ ReadInput:
 ; Output:
 ;  [B], [A] = KeyUp | KeyDown | KeyLeft | KeyRight | KeyRestartLevel | KeyUndo
 ;  flags set according to ANI
+
+	; setup keyboard row strobe masks
+
+	ifdef TargetNec
+	  lxi b, 0x01FF & ~(1 << 6) ; row 6 = arrow key row on NEC
+	endif
+	ifdef TargetT100
+	  lxi b, 0x01FF & ~(1 << 5) ; row 5 = arrow key row on Tandy Model 100
+	endif
+
+	call Keyboard_ReadStableRow
+	cma ; flip active low to high (1 = pressed)
+
+	mov d, a ; [D] save current arrow key state
+
 	lda KeyboardRow6Down
 	cma
-	mov b, a ; Store NOT of the old row 6 in b
-	call ReadArrowKeyRow
-	sta KeyboardRow6Down
-	ana b
+	ana d
 	sta KeyboardRow6Pressed
 	mov b, a ; [B] = key state
+
+	mov a, d
+	sta KeyboardRow6Down
+
 	stc
 	rz ; Return with carry set if no movement key was pressed
 
@@ -777,37 +793,68 @@ Draw:
 	ret
 
 CheckStopKey:
+	lxi b, 0x01ff & ~(1 < 7)
+	call Keyboard_ReadStableRow
+	mov d, a
+
+	lxi b, 0x01ff & ~(1 < 8)
+	call Keyboard_ReadStableRow
+	rrc
+	mov a, d
+	rar
+	ani 0b11000000
+	rnz
+
+	stc
+	ret
+
+	rlc
+	ora d
+	ani 1
+
+
+  if 0
 	push b
+
 	in Port81C55B
-	mov b,a
+	mov b,a ; Save Port B
 	ori 0b00000001
 	out Port81C55B
+
 	in Port81C55A
-	mov c,a
+	mov c,a ; Save Port A
 	mvi a, 0b01111111
 	out Port81C55A
-	in PortKeyIn
-	push psw
+	in PortKeyIn ; Get row 7
+
+	push psw ; Save row 7
+
 	mvi a, 0b11111111
 	out Port81C55A
-	mov a,b
+	mov a,b ; Restore Port B
 	ani 0b11111110
 	out Port81C55B
-	in PortKeyIn
-	rrc
-	mov a,c
+
+	in PortKeyIn ; Get row 8
+	rrc ; bit 0 : SHIFT (store in carry flag)
+
+	mov a,c ; Restore Port A
 	out Port81C55A
-	mov a,b
+
+	mov a,b ; Restore Port B
 	out Port81C55B
-	pop b
-	mov a,b
-	rar
+
+	pop b ; [B] = row 7
+	mov a,b ; [A] = row 7
+	rar ; bit 0 -> bit 7: STOP
 	ani 0b11000000
 	pop b
 	rnz
 	inr a
 	stc
 	ret
+
+  endif
 
 	ifdef TargetNec
 KeyUndo equ (1 << 0)
@@ -826,33 +873,79 @@ KeyRight equ (1 << 5)
 KeyRestartLevel equ ???
 	endif
 
-ReadArrowKeyRow:
-	; Result: [A] = bit mask for key state of row given in [C]
-	; 1 = pressed, 0 = released
+Keyboard_ReadStableRow:
+; [B] = row 8 strobe inhibit mask (0 = strobe, 1 = no strobe)
+; [C] = row 0-7 strobe inhibit mask (0 = strobe, 1 = no strobe)
+; out: [A] = read row (active low, 0 = pressed)
+	push d
+
+	call Keyboard_ReadRow
+	mov d, a ; [D] = previous row state
+
+.debounceWait:
+	lxi h, 1024 ; ~10ms delay at 2.4576 MHz
+.delayLoop:
+	dcx h
+	mov a, h
+	ora l
+	jnz .delayLoop
+
+	call Keyboard_ReadRow
+
+	; compare new state [A] with previous state [D]
+	cmp d
+	mov d, a ; new state -> old state
+	jnz .debounceWait ; still bouncing
+
+	pop d
+	ret
+
+Keyboard_ReadRow:
+; Reads the keyboard matrix row selected by the bit mask in [BC]
+; But it is really a strobe inhibit mask, so every 1 bit disables strobe to
+; that particular keyboard row.
+; IMPORTANT! [B] must only every be 0 or 1 since it should only affect row 8
+; Output in [C] is row state in active low (0 means pressed, 1 means not pressed).
+;
+; [BC] = 0b00000001_11111111 & ~(1 << rowIndex)
+; OUT: [A] = Row state (active low)
+; Clobbers [PSW/A] [BC] [D]
 	push b
+	push d
 	di
+
+	; Set strobe for row 8
 	in   Port81C55B
-	ori  0b00000001
+	mov  d, a ; save old Port81C55B value
+	ani  0b11111110
+	ora  b
 	out  Port81C55B
+
+	; Set strobe for rows 0 - 7
 	in   Port81C55A
-	mov  b, a ; save old Port81C55A value
-	ifdef TargetNec
-		mvi  a, 0b10111111 ; Strobe on row 6
-	endif
-	ifdef TargetT100
-		mvi  a, 0b11011111 ; Strobe on row 5
-	endif
+	mov  b, a ; [B] save old Port81C55A value
+	mov  a, c ; [C] = strobe for rows 0 - 7
 	out  Port81C55A
-	in   PortKeyIn ; read keyboard bits (0 = pressed)
+
+	; read keyboard bits (0 = pressed)
+	in   PortKeyIn
 	mov  c, a
 
-	mov  a, b ; restore Port81C55A
+	; restore old Port81C55A
+	mov  a, b
 	out  Port81C55A
 
-	mov  a, c
+	; restore old Port81C55B
+	mov  a, d
+	out  Port81C55B
+
 	ei
-	pop  b
-	cma ; Make 1 mean pressed and 0 mean NOT pressed
+
+	mov a, c ; [A] = key state
+
+	pop d
+	pop b
+
 	ret
 
 TilePtrFromIndex:
