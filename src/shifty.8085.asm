@@ -20,6 +20,15 @@ DirectionUp    equ 0b01
 DirectionLeft  equ 0b10
 DirectionDown  equ 0b11
 
+; Normalized Virtual Gamepad Bits
+PadRight   equ (1 << 0)
+PadUp      equ (1 << 1)
+PadLeft    equ (1 << 2)
+PadDown    equ (1 << 3)
+PadUndo    equ (1 << 4)
+PadRestart equ (1 << 5)
+PadExit    equ (1 << 6)
+
 	org ProgramBaseAddr
 
 	call ShowTitle
@@ -30,8 +39,8 @@ GameStart:
 	call GameInit
 
 GameLoop:
-	call CheckStopKey
-	rc
+	; call CheckStopKey
+	; rc
 
 	call ReadInput
 	jc GameLoop ; If none of the movement keys were pressed, jump back
@@ -446,91 +455,6 @@ RemoveGoal:
 	pop h
 	ret
 
-
-
-
-ReadInput:
-; Output:
-;  [B], [A] = KeyUp | KeyDown | KeyLeft | KeyRight | KeyRestartLevel | KeyUndo
-;  flags set according to ANI
-
-	; setup keyboard row strobe masks
-
-	ifdef TargetNec
-	  lxi b, 0x01FF & ~(1 << 6) ; row 6 = arrow key row on NEC
-	endif
-	ifdef TargetT100
-	  lxi b, 0x01FF & ~(1 << 5) ; row 5 = arrow key row on Tandy Model 100
-	endif
-
-	call Keyboard_ReadStableRow
-	cma ; flip active low to high (1 = pressed)
-
-	mov d, a ; [D] save current arrow key state
-
-	lda KeyboardRow6Down
-	cma
-	ana d
-	sta KeyboardRow6Pressed
-	mov b, a ; [B] = key state
-
-	mov a, d
-	sta KeyboardRow6Down
-
-	stc
-	rz ; Return with carry set if no movement key was pressed
-
-	ani KeyRight
-	jz .rightNotPressed
-	mvi c, DirectionRight
-.rightNotPressed:
-
-	mov a, b ; restore pressed
-
-	ani KeyUp
-	jz .upNotPressed
-	mvi c, DirectionUp
-.upNotPressed:
-
-	mov a, b ; restore pressed
-
-	ani KeyLeft
-	jz .leftNotPressed
-	mvi c, DirectionLeft
-.leftNotPressed:
-
-	mov a, b ; restore pressed
-
-	ani KeyDown
-	jz .downNotPressed
-	mvi c, DirectionDown
-.downNotPressed:
-
-	mov a, b ; restore pressed
-	ani KeyUndo
-	jz .undoNotPressed
-	call Undo
-	call Draw
-	stc
-	ret
-.undoNotPressed:
-
-	mov a, b ; restore pressed
-	ani KeyRestartLevel
-	lda CurrentLevelIndex
-	jz .restartLevelNotPressed
-	call GotoLevel
-	call Draw
-	stc
-	ret
-.restartLevelNotPressed:
-
-	mov a, c
-	sta PlayerMoveDir
-
-	ora a
-	ret
-
 GotoLevel:
 ; [A] = Level index to go to
 	add a ; 2 * level index
@@ -792,94 +716,83 @@ Draw:
 	call SetInterruptMask_09
 	ret
 
-CheckStopKey:
-	lxi b, 0x01ff & ~(1 < 7)
-	call Keyboard_ReadStableRow
-	mov d, a
+ReadInput:
+; Output:
+;  [B], [A] = Normalized newly pressed keys
+;  Carry flag set if no movement key was pressed
 
-	lxi b, 0x01ff & ~(1 < 8)
-	call Keyboard_ReadStableRow
-	rrc
+	call VirtualPad_ReadStable
+	mov d, a                    ; [D] = Current stable virtual state
+
+	; Calculate newly pressed keys (Edge detection)
+	lda VirtualPadDown          ; [A] = Old virtual state
+	cma                         ; [A] = NOT Old
+	ana d                       ; [A] = (NOT Old) AND Current = Newly pressed
+	sta VirtualPadPressed
+	mov b, a                    ; [B] = Newly pressed keys
+
+	; Update state for next frame
 	mov a, d
-	rar
-	ani 0b11000000
-	rnz
+	sta VirtualPadDown
 
+	; Check if any key was pressed
+	mov a, b
+	stc
+	rz                          ; Return with carry set if nothing was pressed
+
+	ani PadRight
+	jz .rightNotPressed
+	mvi c, DirectionRight
+.rightNotPressed:
+
+	mov a, b
+	ani PadUp
+	jz .upNotPressed
+	mvi c, DirectionUp
+.upNotPressed:
+
+	mov a, b
+	ani PadLeft
+	jz .leftNotPressed
+	mvi c, DirectionLeft
+.leftNotPressed:
+
+	mov a, b
+	ani PadDown
+	jz .downNotPressed
+	mvi c, DirectionDown
+.downNotPressed:
+
+	mov a, b
+	ani PadUndo
+	jz .undoNotPressed
+	call Undo
+	call Draw
 	stc
 	ret
+.undoNotPressed:
 
-	rlc
-	ora d
-	ani 1
-
-
-  if 0
-	push b
-
-	in Port81C55B
-	mov b,a ; Save Port B
-	ori 0b00000001
-	out Port81C55B
-
-	in Port81C55A
-	mov c,a ; Save Port A
-	mvi a, 0b01111111
-	out Port81C55A
-	in PortKeyIn ; Get row 7
-
-	push psw ; Save row 7
-
-	mvi a, 0b11111111
-	out Port81C55A
-	mov a,b ; Restore Port B
-	ani 0b11111110
-	out Port81C55B
-
-	in PortKeyIn ; Get row 8
-	rrc ; bit 0 : SHIFT (store in carry flag)
-
-	mov a,c ; Restore Port A
-	out Port81C55A
-
-	mov a,b ; Restore Port B
-	out Port81C55B
-
-	pop b ; [B] = row 7
-	mov a,b ; [A] = row 7
-	rar ; bit 0 -> bit 7: STOP
-	ani 0b11000000
-	pop b
-	rnz
-	inr a
+	mov a, b
+	ani PadRestart
+	lda CurrentLevelIndex
+	jz .restartLevelNotPressed
+	call GotoLevel
+	call Draw
 	stc
 	ret
+.restartLevelNotPressed:
 
-  endif
+	mov a, c
+	sta PlayerMoveDir
 
-	ifdef TargetNec
-KeyUndo equ (1 << 0)
-KeyUp    equ (1 << 1)
-KeyDown  equ (1 << 2)
-KeyLeft  equ (1 << 3)
-KeyRight equ (1 << 4)
-KeyRestartLevel equ (1 << 7)
-	endif
-	ifdef TargetT100
-KeyUndo equ ???
-KeyUp    equ (1 << 6)
-KeyDown  equ (1 << 7)
-KeyLeft  equ (1 << 4)
-KeyRight equ (1 << 5)
-KeyRestartLevel equ ???
-	endif
+	ora a
+	ret
 
-Keyboard_ReadStableRow:
-; [B] = row 8 strobe inhibit mask (0 = strobe, 1 = no strobe)
-; [C] = row 0-7 strobe inhibit mask (0 = strobe, 1 = no strobe)
-; out: [A] = read row (active low, 0 = pressed)
+
+VirtualPad_ReadStable:
 	push d
 
-	call Keyboard_ReadRow
+	call VirtualPad_ReadRaw
 	mov d, a ; [D] = previous row state
 
 .debounceWait:
@@ -890,7 +803,7 @@ Keyboard_ReadStableRow:
 	ora l
 	jnz .delayLoop
 
-	call Keyboard_ReadRow
+	call VirtualPad_ReadRaw
 
 	; compare new state [A] with previous state [D]
 	cmp d
@@ -898,6 +811,94 @@ Keyboard_ReadStableRow:
 	jnz .debounceWait ; still bouncing
 
 	pop d
+	ret
+
+GET_KEY_ROW	macro row
+	lxi b, 0x01FF & ~(1 << #row)
+	call Keyboard_ReadRow_NoRestore
+	endm
+
+GET_KEY	macro bit, padflag
+	lxi h, ((1 << #bit) << 8) | #padflag
+	call __GetKey
+	endm
+__GetKey:
+	mov a, b
+	ana  h
+	rz
+	mov  a, d
+	ora  l
+	mov  d, a
+	ret
+
+VirtualPad_ReadRaw:
+	push b
+	push d
+	di
+	in Port81C55A
+	mov d, a
+	in Port81C55B
+	mov e, a
+	push d
+
+	mvi d, 0 ; [D] = VirtualPad
+
+  ifdef TargetNec
+	GET_KEY_ROW 6
+	GET_KEY 4, PadRight
+	GET_KEY 1, PadUp
+	GET_KEY 3, PadLeft
+	GET_KEY 2, PadDown
+	GET_KEY 0, PadUndo
+	GET_KEY 7, PadRestart
+
+	GET_KEY_ROW 0
+	GET_KEY 0, PadUndo ; Z
+
+	GET_KEY_ROW 2
+	GET_KEY 1, PadUp ; W
+
+	GET_KEY_ROW 1
+	GET_KEY 0, PadLeft ; A
+	GET_KEY 1, PadDown ; S
+	GET_KEY 2, PadRight ; D
+
+	GET_KEY_ROW 7
+	GET_KEY 7, PadExit ; STOP Key
+  endif
+  ifdef TargetT100
+  assert false ; todo
+  endif
+
+	pop b
+	mov a, c
+	out Port81C55B
+	mov a, b
+	out Port81C55A
+	ei
+
+	mov a, d
+	pop d
+	pop b
+	ret
+
+
+Keyboard_ReadRow_NoRestore:
+; [BC] = row strobe index mask
+; [B] = read row in (active high)
+	mov a, e
+	ani  0b11111110
+	ora  b
+	out  Port81C55B
+
+	; Set strobe for rows 0 - 7
+	mov  a, c ; [C] = strobe for rows 0 - 7
+	out  Port81C55A
+
+	; read keyboard bits (0 = pressed)
+	in   PortKeyIn
+	cma
+	mov b, a
 	ret
 
 Keyboard_ReadRow:
@@ -909,7 +910,7 @@ Keyboard_ReadRow:
 ;
 ; [BC] = 0b00000001_11111111 & ~(1 << rowIndex)
 ; OUT: [A] = Row state (active low)
-; Clobbers [PSW/A] [BC] [D]
+
 	push b
 	push d
 	di
@@ -1252,10 +1253,9 @@ PlayerMoveDir: ds 1
 MissingTargets: ds 1
 
 CurrentLevelIndex: ds 1
-; PlayerMoveStoneStackIndex: ds 1
 
-KeyboardRow6Down: ds 1
-KeyboardRow6Pressed: ds 1
+VirtualPadDown:    ds 1
+VirtualPadPressed: ds 1
 
 VariablesEnd:
 
