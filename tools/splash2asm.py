@@ -3,8 +3,7 @@ from PIL import Image
 from pathlib import Path
 import argparse
 
-
-def image_to_segmented_assembly(image_path):
+def image_to_tiles_assembly(image_path):
     # Target LCD dimensions
     TARGET_WIDTH = 240
     TARGET_HEIGHT = 64
@@ -12,7 +11,7 @@ def image_to_segmented_assembly(image_path):
     try:
         img = Image.open(image_path).convert('1')
     except Exception as e:
-        return f"Error loading image: {e}"
+        sys.exit(f"Error loading image: {e}")
 
     # Force image to exactly 240x64 by creating a white canvas and pasting
     # This prevents out-of-bounds errors if the input image is the wrong size.
@@ -20,53 +19,45 @@ def image_to_segmented_assembly(image_path):
     canvas.paste(img, (0, 0))
     img = canvas
 
-    # Define the 10 controllers: (start_x, width, start_y)
-    controllers = [
-        (0,   50, 0),  # Controller 0
-        (50,  50, 0),  # Controller 1
-        (100, 50, 0),  # Controller 2
-        (150, 50, 0),  # Controller 3
-        (200, 40, 0),  # Controller 4 (Cropped)
-        (0,   50, 32), # Controller 5
-        (50,  50, 32), # Controller 6
-        (100, 50, 32), # Controller 7
-        (150, 50, 32), # Controller 8
-        (200, 40, 32)  # Controller 9 (Cropped)
-    ]
-
     asm_lines = []
 
-    for ctrl_idx, (start_x, width, start_y) in enumerate(controllers):
-        asm_lines.append(f"\n    ; --- Controller {ctrl_idx} ({width}x32) ---")
+    # 240 pixels wide / 10 pixels per tile = 24 tiles horizontally (X)
+    # 64 pixels high / 8 pixels per tile = 8 tiles vertically (Y)
+    # Total tiles = 24 * 8 = 192 tiles
 
-        # Each controller has 32 vertical pixels, which is 4 pages of 8 pixels
-        for page in range(4):
-            asm_lines.append(f"    ; Page {page}")
-            y_offset = start_y + (page * 8)
-            page_bytes = []
+    # The ASM loops 'l' from 0 to 191.
+    # l format: XXXXXYYY (bits 0-2: Y, bits 3-7: X)
+    # This means Y increments first, then X. (Column-major ordering)
+    for tile_x in range(24):
+        for tile_y in range(8):
+            # Calculate the literal 'l' value for commenting
+            l_val = (tile_x << 3) | tile_y
+            asm_lines.append(f"\n    ; --- Tile {l_val} (X:{tile_x}, Y:{tile_y}) ---")
 
-            # Traverse left-to-right within this specific page
-            for x in range(start_x, start_x + width):
+            tile_bytes = []
+
+            # Each tile is 10 pixels wide
+            for col in range(10):
                 byte_val = 0
+                pixel_x = (tile_x * 10) + col
+
+                # Each column is 8 pixels high (1 byte)
                 for bit in range(8):
-                    pixel = img.getpixel((x, y_offset + bit))
+                    pixel_y = (tile_y * 8) + bit
+                    pixel = img.getpixel((pixel_x, pixel_y))
 
                     # 0 is black (ON) in Pillow's '1' mode
                     if pixel == 0:
-                        # Top pixel is LSB. Swap to (1 << (7 - bit)) if your screen draws upside down.
+                        # Top pixel is LSB.
                         byte_val |= (1 << bit)
 
-                page_bytes.append(byte_val)
+                tile_bytes.append(byte_val)
 
-            # Format the page into assembly lines (10 bytes per line for clean alignment)
-            bytes_per_line = 10
-            for i in range(0, len(page_bytes), bytes_per_line):
-                chunk = page_bytes[i:i + bytes_per_line]
-                hex_strings = [f"0x{b:02x}" for b in chunk]
-                asm_lines.append("    db " + ", ".join(hex_strings))
+            # Format the 10 bytes into a single assembly line
+            hex_strings = [f"0x{b:02x}" for b in tile_bytes]
+            asm_lines.append("    db " + ", ".join(hex_strings))
 
     return asm_lines
-
 
 def main() -> None:
     p = argparse.ArgumentParser()
@@ -74,8 +65,9 @@ def main() -> None:
     p.add_argument("output", type=Path, help="output assembly file to write")
     args = p.parse_args()
 
-    out = image_to_segmented_assembly(args.input)
+    out = image_to_tiles_assembly(args.input)
     args.output.write_text("\n".join(out), encoding="utf-8")
+    print(f"Successfully wrote 192 tiles to {args.output}")
 
 if __name__ == "__main__":
     main()

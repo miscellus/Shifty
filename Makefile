@@ -25,9 +25,7 @@ build/web: build web/web_shifty.wasm web/web_shifty.js web/web_shifty.html
 
 $(SHIFTY): build/web src/shifty.8085.asm src/tiles.8085.asm src/levels.8085.asm src/splash.8085.asm Makefile $(ASM)
 	$(ASM) -c -o $(SHIFTY) -d build/web/debug.json src/shifty.8085.asm
-	$(ASM) -o $(SHIFTY).bin src/shifty.8085.asm
 	cp $(SHIFTY) build/web
-	python tools/co2bas.py $(SHIFTY) -o $(SHIFTY).bas
 
 web/web_shifty.wasm: web/web_shifty.c
 	clang --target=wasm32 \
@@ -45,7 +43,7 @@ src/levels.8085.asm: assets/levels.txt src/tiles.8085.asm tools/levels2asm.py Ma
 	python tools/levels2asm.py assets/levels.txt src/tiles.8085.asm src/levels.8085.asm
 
 src/splash.8085.asm: tools\splash2asm.py assets/title_screen_240x64.png Makefile
-	python tools\splash2asm.py assets/title_screen_240x64.png src/splash.8085.asm
+	python tools/splash2asm.py assets/title_screen_240x64.png src/splash.8085.asm
 
 tools/serild.co: tools/serild.8085.asm
 	$(ASM) -c -o tools/serild.co tools/serild.8085.asm

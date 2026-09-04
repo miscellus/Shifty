@@ -35,13 +35,9 @@ PadExit    equ (1 << 6)
 GameStart:
 	call ReadInput
 	jc GameStart
-
 	call GameInit
 
 GameLoop:
-	; call CheckStopKey
-	; rc
-
 	call ReadInput
 	jc GameLoop ; If none of the movement keys were pressed, jump back
 
@@ -105,13 +101,12 @@ PlayerMove:
 	push h ; push our initial position
 	mvi b, 1 ; our initial position count is 1
 Move_SearchLoop:
+
 	lda PlayerMoveDir
-	; mov a, c ; [A] = direction
 	call TryGetNeigborAddr
 	jc Move_FoundSolid ; return with carry out of bounds and the move should be cancelled
 
-	; call TileAddressFromPos
-	mov a, m
+	mov a, m ; [A] = tile info
 
 	; Check for pushables
 	cpi PushableMask
@@ -619,8 +614,16 @@ Undo:
 	ret
 
 ShowTitle:
-	lxi h, .splash
-	call DrawFullScreen
+	di
+	mvi l, 0
+	lxi d, .splash
+.loop:
+	call DrawTile
+	inr l
+	mvi a, 191
+	cmp l
+	jnc .loop
+	ei
 	ret
 .splash:
  include "splash.8085.asm"
@@ -632,34 +635,10 @@ GameInit:
 	call Draw
 	ret
 
-TileAddressFromPos:
-; [D] = X pos (0 - 23)
-; [E] = Y pos (0 - 7)
-; -> [HL] = tile address
-	lxi h, Level
-	mov a, d
-	add a
-	add a
-	add a ; + X*8
-	add e ; + Y
-
-	; [A] = Tile Offset
-
-	add l
-	mov l, a
-	mvi a, 0
-	adc h
-	mov h, a
-	ret
-
 Draw:
 	call SetInterruptMask_1d
 	lxi h, Level
-	mvi d, 0 ; [D] = X = 0
-.drawLevelRows:
-	mvi e, 0 ; [E] = Y = 0
-.drawLevelCols:
-
+.nextTile:
 	mov a, m
 	mov c, a ; [C] = Tile Info
 	rlc
@@ -673,45 +652,22 @@ Draw:
 	dcr b
 .drawTileNotActive:
 
-	; rlc
-	; mvi a, 0
-	; sbb a
-	; mov b, a ; [B] = 0xFF if ActiveTileMask, 0 otherwise
-
 	mov a, c
 	ani TileIndexMask
 
-	push h ; Save level offset
-	  call TilePtrFromIndex
-	  mvi a, low(Tiles)
-	  add l
-	  mov l, a
-	  mvi a, high(Tiles)
-	  adc h
-	  mov h, a
-	  ; [D] = X
-	  ; [E] = Y
-	  ; [HL] = TileOffset = Tiles + TileIndex
-	  ; lxi h, TileWallBrick
-	  ; [B] = 0xFF if ActiveTileMask, 0 otherwise
-	  call DrawTile
-	pop h ; restore level offset
+	call TilePtrFromIndex
+	call DrawTile
 
 .clearRedrawFlag:
 	mov a, m
-	ani ~NeedsRedrawMask & 0xff
+	ani ~NeedsRedrawMask
 	mov m, a
 
 .continue:
-	inx h
-	inr e ; next Y
-	mov a, e
-	cpi 8
-	jc .drawLevelCols
-	inr d
-	mov a, d
-	cpi 24
-	jc .drawLevelRows
+	inr l
+	mvi a, 191
+	cmp l
+	jnc .nextTile
 
 	call SetInterruptMask_09
 	ret
@@ -901,189 +857,140 @@ Keyboard_ReadRow_NoRestore:
 	mov b, a
 	ret
 
-Keyboard_ReadRow:
-; Reads the keyboard matrix row selected by the bit mask in [BC]
-; But it is really a strobe inhibit mask, so every 1 bit disables strobe to
-; that particular keyboard row.
-; IMPORTANT! [B] must only every be 0 or 1 since it should only affect row 8
-; Output in [C] is row state in active low (0 means pressed, 1 means not pressed).
-;
-; [BC] = 0b00000001_11111111 & ~(1 << rowIndex)
-; OUT: [A] = Row state (active low)
-
-	push b
-	push d
-	di
-
-	; Set strobe for row 8
-	in   Port81C55B
-	mov  d, a ; save old Port81C55B value
-	ani  0b11111110
-	ora  b
-	out  Port81C55B
-
-	; Set strobe for rows 0 - 7
-	in   Port81C55A
-	mov  b, a ; [B] save old Port81C55A value
-	mov  a, c ; [C] = strobe for rows 0 - 7
-	out  Port81C55A
-
-	; read keyboard bits (0 = pressed)
-	in   PortKeyIn
-	mov  c, a
-
-	; restore old Port81C55A
-	mov  a, b
-	out  Port81C55A
-
-	; restore old Port81C55B
-	mov  a, d
-	out  Port81C55B
-
-	ei
-
-	mov a, c ; [A] = key state
-
-	pop d
-	pop b
-
-	ret
-
 TilePtrFromIndex:
 	; [A] = tile_index
-	; <- [HL] = Tiles + tile_index * 10
-	; <- [BC] = TileIndex * 2
-	push b
+	; <- [DE] = Tiles + tile_index * 10
+	push h
 	mvi h, 0
 	mov l, a ; [HL] = TileIndex
 	dad h ; * 2
-	mov b, h
-	mov c, l ; [BC] = TileIndex * 2
+	mov d, h
+	mov e, l ; [BC] = TileIndex * 2
 	dad h ; * 4
 	dad h ; * 8
-	dad b ; [HL] = TileIndex * 8 + TileIndex * 2 = TileIndex * 10
-	pop b
+	dad d ; [HL] = TileOffset = TileIndex * 8 + TileIndex * 2 = TileIndex * 10
+	lxi d, Tiles
+	dad d
+	xchg ; [DE] = Tile ptr = Tiles + TileOffset
+	pop h
 	ret
 
 DrawTile:
-; [hl] = Pointer to 10x8 tile
-; [D] = Tile X [0; 23]
-; [E] = Tile Y [0;  7]
-	push h
-	push d
+; [de] = Pointer to 10x8 tile
+; [l] = Tile position (XXXXXYYY - bits 0-2: Y - bits 3-7: X)
+; [b] = XOR mask for tile image (can be used to invert tile pixels)
+; -> [de] Pointer to next 10x8 tile (input ptr + 10)
 	push psw
-
 	push b
-	  push h
-	    call LcdGetBlockMask
-	    call LcdSelectBlock
-	  pop h
-	  call LcdCalcPageAndOffset
-	  call LcdWaitReady
-	  out PortLcdCmd ; Set page and offset
-	pop b
+	push h
+
+	call LCD_SelectDriver
+	;call LCD_SetPageAndOffset
 
 	mvi c, 10
 .WriteColumns:
 	in PortLcdStat
 	rlc ; shift busy bit out into carry bit
 	jc .WriteColumns ; If cary set, LCD is busy, so keep looping
-	mov a, m
+	ldax d
 	xra b
 	out PortLcdData ; Write column to LCD memory
-	inx h
+	inx d
 	dcr c
 	jnz .WriteColumns
 
-	pop psw
-	pop d
 	pop h
+	pop b
+	pop psw
 	ret
 
 ; -----------------------------------------------------------
-; Subroutine: LcdGetBlockMask
+; Subroutine: LCD_SelectDriver
 ; Purpose:    Computes segment driver mask (1 << n) for PC-8201A
-; Input:      D = TileX (0 to 23)
-;             E = TileY (0 to 7)
 ; Output:     HL = 16-bit Driver Selection Mask (1 << n)
 ;             B  = Driver Index 'n' (0 to 9)
 ;             C  = Local TileX offset inside the driver (0 to 4)
 ; Destroys:   A, B, C, H, L, Flags
 ; -----------------------------------------------------------
 
-LcdGetBlockMask:
-	; BASE INDEX (TileX / 5)
-	mov a, d      ; Load TileX into A
-	mvi b, 0      ; Initialize B (will hold our driver index 'n')
-	mvi c, 5      ; Load constant divisor (5)
+LCD_SelectDriver:
+; [L] = Tile Pos = TileX << 5 | TileY
+; -> [C] = TileX % 5 (0-4)
+	push h
 
+	; Extract TileX
+	mov a, l
+	rrc
+	rrc
+	rrc
+	ani 31
+	mov c, a ; [A] = TileX
+
+	; The LCD of the KC-85 family is controlled by
+	; 10 separate LCD drivers indexed from 0-9.
+	; Their index correspond to this physical layout of the display:
+	;
+	;   +-------+-------+-------+-------+-----+ +
+	;   |       |       |       |       |     |   <-- Drivers 4 and 9 are "cropped"
+	;   |   0   |   1   |   2   |   3   |   4 | |     i.e. you can address pixels
+	;   |       |       |       |       |     |       outside the physical display
+	;   +-------+-------+-------+-------+-----+ +
+	;   |       |       |       |       |     |
+	;   |   5   |   6   |   7   |   8   |   9 | |
+	;   |       |       |       |       |     |
+	;   +-------+-------+-------+-------+-----+ +
+	;
+	; The LCD drivers are enabled by a selection bit mask
+	; where a 1 bit in position N enables the LCD controller
+	; with index N.
+
+	; Compute [HL] = LCD driver chip selection mask
+	; Start mask at 0000000001 (corresponding to Driver 0)
+	; Unless TileY >= 4, then
+	; start mask at 0000100000 (corresponding to Driver 5)
+	mov a, l
+	lxi h, 1 << 0
+	ani (1 << 2)
+	jz .topHalf
+	mvi l, 1 << 5
+.topHalf:
+
+	; Figure out which LCD driver column we are in by
+	; dividing TileX with 5 (by repeated subtraction)
+	mov a, c ; [A] = TileX
+	mvi c, 5 ; [C] = divisor
 .divLoop:
-	cmp c         ; Compare working remainder with 5
-	jc .checkY    ; If A < 5, division is done
-	sub c         ; Subtract 5
-	inr b         ; Increment driver index
+	cmp c
+	jc .endDivLoop ; If A < 5, division is done
+	sub c ; -= 5
+	dad h ; shift HL left by 1
 	jmp .divLoop
 
-.checkY:
-	; HANDLE TOP/BOTTOM HALF
-	mov c, a      ; SAVE REMAINDER: C is now the local TileX offset (0-4)!
+.endDivLoop:
+	mov c, a ; [C] = TileX % 5 (0-4)
 
-	mov a, e      ; Load TileY into A
-	ani 4         ; Check bit 2 (0000 0100). High if TileY >= 4.
-	jz .shiftMask ; If zero, it's the top half. Index 'n' is ready.
-
-	; If non-zero, it's the bottom half. Add 5 to the index.
-	mov a, b
-	adi 5
-	mov b, a      ; B now holds final 'n' (5 to 9)
-
-.shiftMask:
-	; 16-BIT MASK (1 << n)
-	lxi h, 1      ; Start with mask = 1 (16-bit)
-	mov a, b      ; Use 'n' as our loop counter
-	ora a         ; Is 'n' exactly 0?
-	rz            ; If yes, Return immediately (HL is already correct)
-
-.shiftLoop:
-	dad h          ; HL = HL * 2. This shifts our 16-bit mask left natively!
-	dcr a          ; Decrement shift counter
-	jnz .shiftLoop ; Repeat until A is 0
-
-	ret            ; Done. Mask in HL, Local Offset in C, Index in B.
-
-LcdSelectBlock:
-; [L] = LCD Block bitmask bits 0-7
-; [H] = LCD Block bitmask bits 8-9
+	; Apply the LCD driver chip selection mask
+	; [L] = LCD Block bitmask bits 0-7
+	; [H] = LCD Block bitmask bits 8-9
 	mov a,l
 	out Port81C55A
 	in Port81C55B
 	ani 0b11111100
 	ora h
 	out Port81C55B
-	ret
 
-LcdWaitReady:
-	push psw
-.again:
-	in PortLcdStat
-	rlc ; shift busy bit out into carry bit
-	jc .again ; If cary set, LCD is busy, so keep looping
+	pop h
+	;ret
 
-	pop psw
-	ret
 
-; -----------------------------------------------------------
-; Subroutine: LcdCalcPageAndOffset
-; Purpose:    Computes the PP0OOOOO byte for HD44102CH LCD driver
-; Input:      C = Local TileX offset (0 to 4)  <-- From CALC_LCD_MASK
-;             E = TileY (0 to 7)
-; Output:     A = Formatted Command Byte (Bits 7,6=Page, 5-0=Offset)
-; Destroys:   A, B, D, Flags
-; -----------------------------------------------------------
-
-LcdCalcPageAndOffset:
+LCD_SetPageAndOffset:
+; Computes the PP0OOOOO byte for HD44102CH LCD driver
+; [C] = Local TileX (0 to 4)
+; [L] = Tile position (Tile Y in bits 0-3)
 	; Page (Bits 6,7)
-	mov a, e      ; Load TileY (0 to 7)
+	push b
+
+	mov a, l      ; Load TileY (0 to 7)
 	rrc           ; Rotate right once  (A = P000 000P)
 	rrc           ; Rotate right twice (A = PP00 0000)
 	ani 0b11000000; Mask out the top/bottom half bit
@@ -1092,17 +999,27 @@ LcdCalcPageAndOffset:
 	; Offset (Local TileX * 10)
 	mov a, c      ; Load Local TileX (0 to 4)
 	add a         ; A = x * 2
-	mov d, a      ; Save (x * 2) in D for later
+	mov c, a      ; Save (x * 2) in D for later
 
 	add a         ; A = x * 4
 	add a         ; A = x * 8
-	add d         ; A = (x * 8) + (x * 2) = x * 10
+	add c         ; A = (x * 8) + (x * 2) = x * 10
 	              ; A now holds the pixel offset (0, 10, 20, 30, or 40)
 
 	; --- 3. COMBINE PAGE AND OFFSET ---
 	ora b         ; Bitwise OR the offset with the Page mask stored in B
+	mov b, a ; [B] The formatted PP0OOOOO
 
-	ret           ; Done. The formatted PP0OOOOO byte is ready in A.
+.waitLcd:
+	in PortLcdStat
+	rlc ; shift busy bit out into carry bit
+	jc .waitLcd ; If cary set, LCD is busy, so keep looping
+
+	mov a, b
+	out PortLcdCmd ; Set page and offset
+
+	pop b
+	ret
 
 SetInterruptMask_1d:
 	di
@@ -1117,118 +1034,6 @@ SetInterruptMask_09:
 	sim
 	ei
 	ret
-
-
-
-
-
-
-
-
-
-
-
-
-; -----------------------------------------------------------
-; Subroutine: DrawFullScreen
-; Purpose:    Draws a 240x64 full-screen image formatted by the Python script
-; Input:      HL = Pointer to start of image data (e.g. lxi h, image)
-; Destroys:   A, B, C, D, H, L, Flags
-; -----------------------------------------------------------
-DrawFullScreen:
-    mvi b, 0            ; B = Controller Index (0 to 9)
-
-.ControllerLoop:
-    mov a, b
-    cpi 10              ; Are we done with all 10 controllers?
-    rz                  ; Return if B == 10
-
-    mvi c, 0            ; C = Page Index (0 to 3)
-
-.PageLoop:
-    ; --- 1. Calculate and Select Block ---
-    push h              ; [Stack: ImagePtr] Save the image data pointer
-    push b              ; [Stack: ImagePtr, Controller&Page] Save loop counters
-
-    mov a, b            ; A = Controller index
-    call GetMaskFromIndex ; Returns driver bitmask in HL
-    call LcdSelectBlock ; Select the physical driver chip
-
-    pop b               ; [Stack: ImagePtr] Restore loop counters
-
-    ; --- 2. Set LCD Page and Offset ---
-    ; Page is in C (0 to 3). Offset is 0 for full screen.
-    ; Command format: PP000000 (Bits 6 & 7 are the Page)
-    mov a, c
-    rrc                 ; Rotate right once (Bit 0 moves to Bit 7)
-    rrc                 ; Rotate right twice
-    ani 0b11000000      ; Mask out garbage, leaving PP000000
-    push b              ; [Stack: ImagePtr, Controller&Page] Save counters again
-
-    call LcdWaitReady   ; Wait for LCD
-    out PortLcdCmd      ; Send Page/Offset command
-
-    ; --- 3. Determine Transfer Width ---
-    ; Controllers 4 and 9 are cropped to 40 columns. The rest are 50.
-    pop b               ; [Stack: ImagePtr] Restore loop counters
-    mov a, b
-    cpi 4
-    jz .isCropped
-    cpi 9
-    jz .isCropped
-    mvi d, 50           ; D = 50 columns
-    jmp .startWrite
-.isCropped:
-    mvi d, 40           ; D = 40 columns
-
-.startWrite:
-    pop h               ; [] Restore Image data pointer into HL
-
-    ; --- 4. Write Data to LCD ---
-.WriteColumns:
-    in PortLcdStat
-    rlc                 ; Shift busy bit out into carry bit
-    jc .WriteColumns    ; If carry set, LCD is busy, keep looping
-
-    mov a, m            ; Read byte from image data
-    out PortLcdData     ; Write column to LCD memory
-    inx h               ; Advance image data pointer
-    dcr d               ; Decrement column counter
-    jnz .WriteColumns   ; Loop until page row is completely drawn
-
-    ; --- 5. Advance to Next Page or Controller ---
-    inr c               ; Next Page
-    mov a, c
-    cpi 4
-    jc .PageLoop        ; If Page < 4, jump back up and do the next row of 8 pixels
-
-    inr b               ; Next Controller
-    jmp .ControllerLoop ; Jump back up and start the next chip
-
-
-; -----------------------------------------------------------
-; Subroutine: GetMaskFromIndex
-; Purpose:    Computes 16-bit segment driver mask (1 << A)
-; Input:      A = Controller Index (0 to 9)
-; Output:     HL = 16-bit Driver Selection Mask
-; Destroys:   A, H, L, Flags
-; -----------------------------------------------------------
-GetMaskFromIndex:
-    lxi h, 1            ; Start with mask = 1
-    ora a               ; Is A exactly 0?
-    rz                  ; If yes, return immediately (HL = 1)
-
-.shiftLoop:
-    dad h               ; HL = HL * 2 (shifts left 1 bit natively)
-    dcr a               ; Decrement loop counter
-    jnz .shiftLoop      ; Repeat until A is 0
-    ret
-
-
-
-
-
-
 
 
 
