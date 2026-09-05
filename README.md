@@ -21,7 +21,16 @@ Good luck entering the eerie corporate catacombs - *cough* - I mean offices of S
 
 ![Example of a Shifty Co Level](./readme/level-example.png)
 
-## Backstory
+## Thanks
+I want to thank [Eydi av Hamri](https://www.youtube.com/c/EydiavHamriChannel) for helping me with the visuals of the game, and generally always being a pleasure to hang out and make games with.
+
+Thank you [Asbjørn Tølbøl Brask](https://www.atbrask.dk/) for **porting this game to Commodore 64!** And for consistently nerd-sniping me into crazier and crazier things while listening to me ramble about this game during our lunch breaks at work.
+
+Also, thank you to my brother [Jesper Kjær-Galle](https://mangestreger.dk) for being the first (I believe) to finish the entire game on the real hardware and giving me important feedback.
+
+Of course thanks to [Marinus Oosters](https://github.com/marinuso/asm8085) for his 8085 assembler that I have really enjoyed using and adding features to, as well as the authors of the VirtualT emulator.
+
+## How and Why Shifty Co Exists
 I was habitually scrolling Den Blå Avis, a Danish platform for buying and selling used items, where I lucked into buying an NEC PC-8201A from 1983 for just 250 kr. (US $39). I was stoked. I love old computers, and this was now the oldest in my collection, by a good margin. I also love games, so after playing around with the built-in BASIC interpreter on the 8201 for a couple of evenings, I decided to try and download some games for it and transfer them via serial RS-232 using its built-in terminal software TELCOM.
 
 I quickly realized that I wasn't going to find tons of games for the 8201. When the machine was new, I believe it was mostly used as a portable word processor, for instance by journalists who wrote reports on it in the field.
