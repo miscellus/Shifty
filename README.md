@@ -22,6 +22,8 @@ Good luck entering the eerie corporate catacombs - *cough* - I mean offices of S
 ![Example of a Shifty Co Level](./readme/level-example.png)
 
 ## Thanks
+First of all, thanks wife for putting up with my NEC PC-8201A which smells like an old smoker's lounge filled with 40-year-old cigarette smoke.
+
 I want to thank [Eydi av Hamri](https://www.youtube.com/c/EydiavHamriChannel) for helping me with the visuals of the game, and generally always being a pleasure to hang out and make games with.
 
 Thank you [Asbjørn Tølbøl Brask](https://www.atbrask.dk/) for **porting this game to Commodore 64!** And for consistently nerd-sniping me into crazier and crazier things while listening to me ramble about this game during our lunch breaks at work.
