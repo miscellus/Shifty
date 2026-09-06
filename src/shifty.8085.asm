@@ -291,16 +291,6 @@ SetCarryAndReturn:
 
 Move_Perform:
 	; [HL] = furthest tile from player
-
-	; Check if we are moving the player this iteration (B=1).
-	; If B=1, DE currently holds the target coordinates for the player.
-	mov a, b
-	cpi 1
-	jnz .skipPlayerPosUpdate
-	; [HL] = new player pos
-	mov a, l
-	sta PlayerPos     ; Update player position in memory
-.skipPlayerPosUpdate:
 	pop d
 	mov a, d
 	cpi 0xFF ; Detect search direction sentinel
@@ -525,8 +515,6 @@ LoadLevel:
 	cpi low(LevelEnd)
 	jnz .readCompressed
 
-	call InitLevelVariables
-
 Undo_Clear:
 	push h
 	xra a
@@ -541,42 +529,6 @@ Undo_Clear:
 	pop h
 	ret
 
-InitLevelVariables:
-; Scans the loaded level and sets the following variables:
-; - PlayerPos
-; - MissingTargets
-	push b
-	push h
-	assert low(Level) == 0
-	mvi h, high(Level)
-	xra a
-	mov l, a
-	mov c, a
-.loop:
-	mov a, m
-	inr l
-	jz .end
-
-	ani TileIndexMask
-	cpi TileGoal_Index
-	jnz .notTarget
-	  inr c
-.notTarget:
-	xri TileBoxKidRight_Index
-	cpi 4
-	jnc .notThePlayer
-	  mov a, l
-	  dcr a
-	  sta PlayerPos
-.notThePlayer:
-	jmp .loop
-.end:
-	mov a, c
-	sta MissingTargets
-
-	pop h
-	pop b
-	ret
 
 Undo:
 	push b
@@ -612,9 +564,6 @@ Undo:
 
 	mov a, l
 	sta UndoBufferAt
-
-	call InitLevelVariables
-
 .end:
 	pop h
 	pop d
@@ -640,15 +589,38 @@ GameInit:
 	mvi a, 0
 	sta CurrentLevelIndex
 	call GotoLevel
-	call Draw
-	ret
+	; call Draw
+	; ret ;; INTENDED fallthrough ;;
 
 Draw:
-	call SetInterruptMask_1d
 	lxi h, Level
+	mvi e, 0 ; [E] Shooting target count
+
+	call SetInterruptMask_1d
 .nextTile:
 	mov a, m
 	mov c, a ; [C] = Tile Info
+
+	; ----------------------------------------------------------------
+	; While we are looping over every tile in the level, keep track of
+	; - PlayerPosition
+	; - Missing shooting targets
+
+	ani TileIndexMask
+	cpi TileGoal_Index
+	jnz .notTarget
+	  inr e
+.notTarget:
+	xri TileBoxKidRight_Index
+	cpi 4
+	jnc .notThePlayer
+	  mov a, l
+	  sta PlayerPos
+.notThePlayer:
+	;
+	; ----------------------------------------------------------------
+
+	mov a, c ; [A] = Tile Info
 	rlc
 	rlc
 	jnc .continue
@@ -663,8 +635,10 @@ Draw:
 	mov a, c
 	ani TileIndexMask
 
-	call TilePtrFromIndex
-	call DrawTile
+	push d
+	  call TilePtrFromIndex
+	  call DrawTile
+	pop d
 
 .clearRedrawFlag:
 	mov a, m
@@ -678,6 +652,10 @@ Draw:
 	jnc .nextTile
 
 	call SetInterruptMask_09
+
+	mov a, e ; [E] = Shooting target count
+	sta MissingTargets
+
 	ret
 
 ReadInput:
@@ -888,12 +866,12 @@ DrawTile:
 ; [l] = Tile position (XXXXXYYY - bits 0-2: Y - bits 3-7: X)
 ; [b] = XOR mask for tile image (can be used to invert tile pixels)
 ; -> [de] Pointer to next 10x8 tile (input ptr + 10)
-	push psw
+; clobbers [A]
 	push b
 	push h
 
 	call LCD_SelectDriver
-	;call LCD_SetPageAndOffset
+	;call LCD_SetPageAndOffset  fallthrough in LCD_SelectDriver
 
 	mvi c, 10
 .WriteColumns:
@@ -909,7 +887,6 @@ DrawTile:
 
 	pop h
 	pop b
-	pop psw
 	ret
 
 ; -----------------------------------------------------------
@@ -953,8 +930,9 @@ LCD_SelectDriver:
 	; with index N.
 
 	; Compute [HL] = LCD driver chip selection mask
+	; Assume top half of display
 	; Start mask at 0000000001 (corresponding to Driver 0)
-	; Unless TileY >= 4, then
+	; Unless TileY >= 4, then we are on the bottom half of the display
 	; start mask at 0000100000 (corresponding to Driver 5)
 	mov a, l
 	lxi h, 1 << 0
@@ -988,8 +966,7 @@ LCD_SelectDriver:
 	out Port81C55B
 
 	pop h
-	;ret
-
+	;ret ;; INTENDED fallthrough to LCD_SetPageAndOffset ;;
 
 LCD_SetPageAndOffset:
 ; Computes the PP0OOOOO byte for HD44102CH LCD driver
