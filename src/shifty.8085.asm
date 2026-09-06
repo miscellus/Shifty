@@ -335,6 +335,14 @@ Move_Perform:
 	call Undo_SaveTile
 	mvi m, TileEmpty_Index | NeedsRedrawMask
 
+	; Update player facing direction
+	lda PlayerMoveDir
+	mov c, a
+	ldax d ; [A] = Player tile info
+	ani ~3
+	ora c
+	stax d
+
 	call Undo_EndMoveRecord
 
 	ora a ; clear carry bit to indicate that the move was performed successfully

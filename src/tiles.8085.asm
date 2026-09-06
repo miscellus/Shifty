@@ -115,20 +115,6 @@ TileDownArrow:
 ;---------------------------------------
 TileBoxKidRight_Index equ 8
 TileBoxKidRight:
-	db 0b00111110
-	db 0b01011101
-	db 0b11000101
-	db 0b01000101
-	db 0b01011101
-	db 0b11000101
-	db 0b01010101
-	db 0b00111110
-	db 0b00010000
-	db 0b00000000
-
-;---------------------------------------
-TileBoxKidLeft_Index equ 9
-TileBoxKidLeft:
 	db 0b00000000
 	db 0b00010000
 	db 0b00111110
@@ -141,7 +127,7 @@ TileBoxKidLeft:
 	db 0b00111110
 
 ;---------------------------------------
-TileBoxKidUp_Index equ 10
+TileBoxKidUp_Index equ 9
 TileBoxKidUp:
 	db 0b00010000
 	db 0b00111110
@@ -153,6 +139,20 @@ TileBoxKidUp:
 	db 0b01000101
 	db 0b00111110
 	db 0b00010000
+
+;---------------------------------------
+TileBoxKidLeft_Index equ 10
+TileBoxKidLeft:
+	db 0b00111110
+	db 0b01011101
+	db 0b11000101
+	db 0b01000101
+	db 0b01011101
+	db 0b11000101
+	db 0b01010101
+	db 0b00111110
+	db 0b00010000
+	db 0b00000000
 
 ;---------------------------------------
 TileBoxKidDown_Index equ 11
