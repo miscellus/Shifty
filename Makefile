@@ -1,61 +1,82 @@
+WASM_CC := clang
+PYTHON  := python3
 
-SHIFTY := build/shifty.co
+BUILD_DIR := build
 
-WEB_SHIFTY_WASM := build/web/pc8201.wasm
+SHIFTY       := $(BUILD_DIR)/shifty.co
+WEB_WASM     := $(BUILD_DIR)/pc8201.wasm
+WEB_JS       := $(BUILD_DIR)/shifty-co.js
+WEB_HTML     := $(BUILD_DIR)/shifty-co.html
+WEB_ASSETS   := $(WEB_WASM) $(WEB_JS) $(WEB_HTML) $(SHIFTY)
 
-ASMDIR := tools/asm8085
-ASMNAME := asm8085
-ASM := $(ASMDIR)/$(ASMNAME)
+ASMDIR       := tools/asm8085
+ASMNAME      := asm8085
+ASM          := $(ASMDIR)/$(ASMNAME)
 
-.PHONY: all clean
+WASM_SOURCE  := web/pc8201.c
+WASM_FLAGS   := -O3 -DTARGET_WEB -nostdlib
+WASM_LDFLAGS := -Wl,--no-entry -Wl,--export-all
 
-# all: tools/serild.co
+.PHONY: all clean asm
 
-all: build/web $(SHIFTY)
+all: $(WEB_ASSETS)
 
-build:
-	mkdir -p build
+$(BUILD_DIR):
+	mkdir -p $@
 
-build/web: build web/pc8201.wasm web/shifty-co.js web/shifty-co.html
-	mkdir -p build/web
-	cp  web/pc8201.wasm \
-		web/shifty-co.js \
-		web/shifty-co.html \
-		build/web
+$(WEB_WASM): $(WASM_SOURCE) | $(BUILD_DIR)
+	$(WASM_CC) --target=wasm32 \
+		$(WASM_FLAGS) \
+		$(WASM_LDFLAGS) \
+		-o $@ $<
 
-$(SHIFTY): build/web src/shifty.8085.asm src/tiles.8085.asm src/levels.8085.asm src/splash.8085.asm Makefile $(ASM)
-	$(ASM) -c -o $(SHIFTY) -d build/web/debug.json src/shifty.8085.asm
-	cp $(SHIFTY) build/web
+$(WEB_JS): web/shifty-co.js | $(BUILD_DIR)
+	cp $< $@
 
-web/pc8201.wasm: web/pc8201.c
-	clang --target=wasm32 \
-      -O3 \
-      -DTARGET_WEB \
-      -nostdlib \
-      -Wl,--no-entry \
-      -Wl,--export-all \
-      -o web/pc8201.wasm web/pc8201.c
+$(WEB_HTML): web/shifty-co.html | $(BUILD_DIR)
+	cp $< $@
 
-src/tiles.8085.asm: $(wildcard assets/tile_images/*.png) tools/png2asm.py Makefile
-	python tools/png2asm.py assets/tile_images src/tiles.8085.asm
+$(SHIFTY): \
+		src/shifty.8085.asm \
+		src/tiles.8085.asm \
+		src/levels.8085.asm \
+		src/splash.8085.asm \
+		$(ASM) \
+		| $(BUILD_DIR)
+	$(ASM) -c -o $@ -d $(BUILD_DIR)/debug.json $<
 
-src/levels.8085.asm: assets/levels.txt src/tiles.8085.asm tools/levels2asm.py Makefile
-	python tools/levels2asm.py assets/levels.txt src/tiles.8085.asm src/levels.8085.asm
+# Generated assembly sources
+src/tiles.8085.asm: \
+		$(wildcard assets/tile_images/*.png) \
+		tools/png2asm.py \
+		#
+	$(PYTHON) tools/png2asm.py assets/tile_images $@
 
-src/splash.8085.asm: tools/splash2asm.py assets/title_screen_240x64.png Makefile
-	python tools/splash2asm.py assets/title_screen_240x64.png src/splash.8085.asm
+src/levels.8085.asm: \
+		assets/levels.txt \
+		src/tiles.8085.asm \
+		tools/levels2asm.py \
+		#
+	$(PYTHON) tools/levels2asm.py \
+		assets/levels.txt \
+		src/tiles.8085.asm \
+		$@
 
-tools/serild.co: tools/serild.8085.asm
-	$(ASM) -c -o tools/serild.co tools/serild.8085.asm
+src/splash.8085.asm: \
+		tools/splash2asm.py \
+		assets/title_screen_240x64.png \
+		#
+	$(PYTHON) tools/splash2asm.py \
+		assets/title_screen_240x64.png \
+		$@
 
 $(ASM):
-	$(MAKE) -C $(ASMDIR) ASM=$(ASMNAME) asm8085
+	$(MAKE) -C $(ASMDIR) ASM=$(ASMNAME) $(ASMNAME)
+
+tools/serild.co: tools/serild.8085.asm asm
+	$(ASM) -c -o $@ $<
 
 clean:
 	$(MAKE) -C $(ASMDIR) clean
+	rm -rf $(BUILD_DIR)
 	rm -f $(ASM)
-	rm -rf build
-
-.PHONY: run
-run: $(SHIFTY)
-	tools/Slappy/slappy.exe -run-co-file $(SHIFTY)
