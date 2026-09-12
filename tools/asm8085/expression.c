@@ -4,7 +4,7 @@
 
 #define STRING_DEFAULT_SIZE 512
 
-#define ERROR "%s(%d): "
+#define ERROR "%s:%d: "
 
 static const char *operators[] = {
     #define _OPR(opr, name, pred, val) #opr ,
@@ -31,7 +31,7 @@ static const char *keywords[] = {
 };
 
 struct base_fx_s {
-    char fx[2];
+    char fx[3];
     int base;
 };
 

@@ -1,7 +1,10 @@
+#define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 
+#include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <strings.h>
 
 static const char *path_resolve(const char *name)
 {

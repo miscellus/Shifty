@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
     
     outsize = make_binary(lines, mem);
 
-    printf("Binary Size: % 20d - %# 15x\n", outsize, outsize);
+    printf("Binary Size: %20zu - %#15zx\n", outsize, outsize);
 
     if (co_file) write_co_file_header(lines, outsize, outf);
 

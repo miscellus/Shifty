@@ -2,7 +2,7 @@
 
 #include "macro.h"
 
-#define ERROR "%s(%d): "
+#define ERROR "%s:%d: "
 
 // Free data structures
 void free_macro(struct macro *macro) {

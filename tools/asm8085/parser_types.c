@@ -8,7 +8,7 @@
 #include "parser_types.h"
 
 
-#define ERROR "%s(%d): "
+#define ERROR "%s:%d: "
 
 
 // Output on error: "<file>: line <line>: error\n"
