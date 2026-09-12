@@ -94,6 +94,15 @@ PlayerMove:
 ; This procedure pushes the pushable positions to the stack
 ; -> [A] = the number of positions pushed to the stack
 
+; TODO:
+; While we are in the main pushable search we keep track of two things:
+;  1. [C] = The current search direction
+;  2. [B] = The current number of steps moved in that direction
+; If we hit a solid (Move_FoundSolid),
+;   then we push [BC].
+;   And if we find a perpendicular arrow during our search retracing,
+;      then we set [B] = 0 and [C] = <new search dir>
+
 	lda PlayerPos
 	mvi h, high(Level)
 	mov l, a
