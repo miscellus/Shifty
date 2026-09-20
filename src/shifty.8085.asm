@@ -111,7 +111,7 @@ PlayerMove:
 	mvi b, 1 ; our initial position count is 1
 Move_SearchLoop:
 
-	lda PlayerMoveDir
+	mov a, c ; [C] = Direction of movement
 	call TryGetNeigborAddr
 	jc Move_FoundSolid ; return with carry out of bounds and the move should be cancelled
 
@@ -230,8 +230,7 @@ Move_FoundSolid:
 	mov a, h
 	cpi 0xFF
 	jnz .notDirectionChangeSentinel
-	mov a, l ; [A] = Restored search direction
-	sta PlayerMoveDir
+	mov c, l ; [C] = Restored search direction
 	jmp .perpArrowSearchLoop
 
 .notDirectionChangeSentinel:
@@ -251,12 +250,10 @@ Move_FoundSolid:
 	jnc .perpArrowSearchLoop ; Not an arrow
 
 	; At this point, it is an arrow
-	mov c, a ; [C] = Arrow direction
+	mov d, a ; [D] = Arrow direction
 
 	; If along the same movement axis, keep looping
-	lda PlayerMoveDir
-	mov e, a ; [E] = Current search direction
-	xra c
+	xra c ; ([A] = Arrow direction) XOR ([C] = Current search direction)
 	rrc ; [CY] = PlayerMoveDir.Axis XOR arrow.Axis
 	jnc .perpArrowSearchLoop ; Keep searching, this arrow is pointing along current movement axis, we need to find a perpendicular arrow
 
@@ -274,13 +271,12 @@ Move_FoundSolid:
 	;         ^#
 	;         ##
 
+	mov e, c ; [E] = Current movement direction
+	mov c, d ; [C] = Arrow direction = New direction of movement
+
 	mvi d, 0xff ; Sentinel that we can tell apart from a position
 	push d ; [DE] = 0xFF<Current search direction>
 	inr b ; account for added stack entry
-
-	; Now, change the PlayerMoveDir
-	mov a, c ; [A] = Arrow direction/
-	sta PlayerMoveDir
 
 	jmp Move_SearchLoop ; Continue main loop
 
@@ -310,8 +306,7 @@ Move_Perform:
 
 	; Write from closest pos [DE] to furthest pos [HL]
 	ldax d ; [A] = closest tile
-	mov c, m ; [C] = furthest tile (overwritten)
-	cmp c
+	cmp m ; [M] = furthest tile (overwritten)
 	jz .tileDidntChange ; Skip writing tile that didn't change
 
 	call Undo_SaveTile
@@ -335,11 +330,9 @@ Move_Perform:
 	mvi m, TileEmpty_Index | NeedsRedrawMask
 
 	; Update player facing direction
-	lda PlayerMoveDir
-	mov c, a
 	ldax d ; [A] = Player tile info
 	ani ~3
-	ora c
+	ora c ; [C] = Direction of movement
 	stax d
 
 	call Undo_EndMoveRecord
@@ -670,6 +663,7 @@ Draw:
 ReadInput:
 ; Output:
 ;  [B], [A] = Normalized newly pressed keys
+;  [C] = Direction of movement
 ;  Carry flag set if no movement key was pressed
 
 	call VirtualPad_ReadStable
@@ -732,9 +726,6 @@ ReadInput:
 	stc
 	ret
 .restartLevelNotPressed:
-
-	mov a, c
-	sta PlayerMoveDir
 
 	ora a
 	ret
@@ -1046,8 +1037,6 @@ Tiles:
 VariablesStart:
 
 PlayerPos: ds 1
-
-PlayerMoveDir: ds 1
 
 MissingTargets: ds 1
 
