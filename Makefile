@@ -17,7 +17,7 @@ WASM_SOURCE  := web/pc8201.c
 WASM_FLAGS   := -O3 -DTARGET_WEB -nostdlib
 WASM_LDFLAGS := -Wl,--no-entry -Wl,--export-all
 
-.PHONY: all clean asm
+.PHONY: all clean asm serve
 
 all: $(WEB_ASSETS)
 
@@ -80,3 +80,6 @@ clean:
 	$(MAKE) -C $(ASMDIR) clean
 	rm -rf $(BUILD_DIR)
 	rm -f $(ASM)
+
+serve: $(WEB_ASSETS)
+	cd $(BUILD_DIR) && python -m http.server
