@@ -19,7 +19,10 @@ WASM_LDFLAGS := -Wl,--no-entry -Wl,--export-all
 
 .PHONY: all clean asm serve
 
-all: $(WEB_ASSETS)
+all: $(WEB_ASSETS) build/sndtes.co
+
+build/sndtes.co: src/test_sound.8085.asm | $(BUILD_DIR)
+	$(ASM) -c -o $@ $<
 
 $(BUILD_DIR):
 	mkdir -p $@

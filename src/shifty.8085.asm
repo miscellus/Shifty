@@ -37,6 +37,10 @@ GameStart:
 	jc GameStart
 	call GameInit
 
+	lxi d, 6000
+	lxi b, 100
+	call Sound_Tone
+
 GameLoop:
 	call ReadInput
 	jc GameLoop ; If none of the movement keys were pressed, jump back
@@ -1018,6 +1022,57 @@ SetInterruptMask_09:
 	mvi a, 0x09
 	sim
 	ei
+	ret
+
+
+
+
+Sound_Tone:
+; [DE] = frequency
+; [B] = duration in ???
+	di
+	mov a,e
+	out Port81C55TimerLo
+	mov a,d
+	ori 0x40
+	out Port81C55TimerHi
+	mvi a,0xc3
+	out Port81C55Cmd
+	in Port81C55B
+	ani 0xf8
+	ori 0x20
+	out Port81C55B
+
+.delayLoop:
+	push b
+	lxi b, 303
+
+	call Delay
+	
+	pop b
+	dcr b
+	jnz .delayLoop
+
+	in Port81C55B
+	ori 0x4
+	out Port81C55B
+	ei
+	ret
+
+Delay:
+; [BC] = iterations
+	mov a,c
+.outerLoop:
+	push b
+	mvi c, 0x48
+.innerLoop:
+	dcr c
+	jnz .innerLoop
+	pop b
+	dcr a
+	jnz .outerLoop
+	dcr b
+	jnz Delay
 	ret
 
 

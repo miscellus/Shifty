@@ -19,6 +19,9 @@ PortLcdData  equ   0xFF        ; LCD Data I/O Port
 Port81C55Cmd equ   0xB8        ; 81C55 Command / Status Port
 Port81C55A   equ   0xB9        ; 81C55 Port A (LCD 1-8 / Key Strobe)
 Port81C55B   equ   0xBA        ; 81C55 Port B (LCD 9-10 / Bell / Power)
+Port81C55C   equ   0xBB        ; 81C55 Port C
+Port81C55TimerLo equ 0xBC      ; bits 0-7 timer low
+Port81C55TimerHi equ 0xBD      ; bits 0-5 timer high, 6-7
 PortKeyIn    equ   0xE8        ; Keyboard Data IN Port
 
 HookTimer     equ   0xF38F     ; RST 7.5 Timer Hook Address
