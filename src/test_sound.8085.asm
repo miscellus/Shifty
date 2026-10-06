@@ -84,19 +84,19 @@ t6 equ 6 << 5
 t7 equ 7 << 5
 
 Melody:
-    ; --- Part 1 ---
-    db t2|e5, t1|b4, t1|c5, t2|d5, t1|c5, t1|b4  ; Bar 1 (8 ticks)
-    db t2|a4, t1|a4, t1|c5, t2|e5, t1|d5, t1|c5  ; Bar 2 (8 ticks)
-    db t3|b4, t1|c5, t2|d5, t2|e5               ; Bar 3 (8 ticks: B4 is dotted quarter)
-    db t2|c5, t2|a4, t4|a4                      ; Bar 4 (8 ticks)
+	; --- Part 1 ---
+	db t2|e5, t1|b4, t1|c5, t2|d5, t1|c5, t1|b4  ; Bar 1 (8 ticks)
+	db t2|a4, t1|a4, t1|c5, t2|e5, t1|d5, t1|c5  ; Bar 2 (8 ticks)
+	db t3|b4, t1|c5, t2|d5, t2|e5               ; Bar 3 (8 ticks: B4 is dotted quarter)
+	db t2|c5, t2|a4, t4|a4                      ; Bar 4 (8 ticks)
 
-    ; --- Part 2 ---
-    db t3|d5, t1|f5, t2|a5, t1|g5, t1|f5        ; Bar 5 (8 ticks: D5 is dotted quarter)
-    db t3|e5, t1|c5, t2|e5, t1|d5, t1|c5        ; Bar 6 (8 ticks: E5 is dotted quarter)
-    db t3|b4, t1|c5, t2|d5, t2|e5               ; Bar 7 (8 ticks)
-    db t2|c5, t2|a4, t4|a4                      ; Bar 8 (8 ticks)
+	; --- Part 2 ---
+	db t3|d5, t1|f5, t2|a5, t1|g5, t1|f5        ; Bar 5 (8 ticks: D5 is dotted quarter)
+	db t3|e5, t1|c5, t2|e5, t1|d5, t1|c5        ; Bar 6 (8 ticks: E5 is dotted quarter)
+	db t3|b4, t1|c5, t2|d5, t2|e5               ; Bar 7 (8 ticks)
+	db t2|c5, t2|a4, t4|a4                      ; Bar 8 (8 ticks)
 
-    db 0                                        ; End Marker
+	db 0                                        ; End Marker
 
 
 ; ======================================================
@@ -244,16 +244,16 @@ Buzzer_SetFreq:
 	mov a, e
 	out Port81C55TimerLo
 	mov a, d
-	ori 0x40
+	ori 1 << 6
 	out Port81C55TimerHi
-	mvi a, 0xc3
+	mvi a, 0b11000011
 	out Port81C55Cmd
 	ret
 
 Buzzer_Off:
 ; clobbers [A]
 	in Port81C55B
-	ori 0x04
+	ori 1 << 2
 	out Port81C55B
 	ret
 
@@ -264,46 +264,46 @@ Buzzer_Off:
 ; Formula: 1228800 / Frequency
 ; ======================================================
 Freq_LUT:
-    dw 0        ; 00: REST (Silence)
+	dw 0        ; 00: REST (Silence)
 
-    ; --- Octave 3 ---
-    dw 5585*2     ; 01: A3  (220.0 Hz)
-    dw 5272*2     ; 02: A#3 (233.1 Hz)
-    dw 4976*2     ; 03: B3  (246.9 Hz)
+	; --- Octave 3 ---
+	dw 5585*2     ; 01: A3  (220.0 Hz)
+	dw 5272*2     ; 02: A#3 (233.1 Hz)
+	dw 4976*2     ; 03: B3  (246.9 Hz)
 
-    ; --- Octave 4 ---
-    dw 4697*2     ; 04: C4  (261.6 Hz)
-    dw 4433*2     ; 05: C#4 (277.2 Hz)
-    dw 4184*2     ; 06: D4  (293.7 Hz)
-    dw 3949*2     ; 07: D#4 (311.1 Hz)
-    dw 3728*2     ; 08: E4  (329.6 Hz)
-    dw 3519*2     ; 09: F4  (349.2 Hz)
-    dw 3321*2     ; 10: F#4 (370.0 Hz)
-    dw 3135*2     ; 11: G4  (392.0 Hz)
-    dw 2959*2     ; 12: G#4 (415.3 Hz)
-    dw 2793*2     ; 13: A4  (440.0 Hz)
-    dw 2636*2     ; 14: A#4 (466.2 Hz)
-    dw 2488*2     ; 15: B4  (493.9 Hz)
+	; --- Octave 4 ---
+	dw 4697*2     ; 04: C4  (261.6 Hz)
+	dw 4433*2     ; 05: C#4 (277.2 Hz)
+	dw 4184*2     ; 06: D4  (293.7 Hz)
+	dw 3949*2     ; 07: D#4 (311.1 Hz)
+	dw 3728*2     ; 08: E4  (329.6 Hz)
+	dw 3519*2     ; 09: F4  (349.2 Hz)
+	dw 3321*2     ; 10: F#4 (370.0 Hz)
+	dw 3135*2     ; 11: G4  (392.0 Hz)
+	dw 2959*2     ; 12: G#4 (415.3 Hz)
+	dw 2793*2     ; 13: A4  (440.0 Hz)
+	dw 2636*2     ; 14: A#4 (466.2 Hz)
+	dw 2488*2     ; 15: B4  (493.9 Hz)
 
-    ; --- Octave 5 ---
-    dw 2348*2     ; 16: C5  (523.3 Hz)
-    dw 2217*2     ; 17: C#5 (554.4 Hz)
-    dw 2092*2     ; 18: D5  (587.3 Hz)
-    dw 1974*2     ; 19: D#5 (622.3 Hz)
-    dw 1864*2     ; 20: E5  (659.3 Hz)
-    dw 1759*2     ; 21: F5  (698.5 Hz)
-    dw 1661*2     ; 22: F#5 (740.0 Hz)
-    dw 1567*2     ; 23: G5  (784.0 Hz)
-    dw 1479*2     ; 24: G#5 (830.6 Hz)
-    dw 1396*2     ; 25: A5  (880.0 Hz)
-    dw 1318*2     ; 26: A#5 (932.3 Hz)
-    dw 1244*2     ; 27: B5  (987.8 Hz)
+	; --- Octave 5 ---
+	dw 2348*2     ; 16: C5  (523.3 Hz)
+	dw 2217*2     ; 17: C#5 (554.4 Hz)
+	dw 2092*2     ; 18: D5  (587.3 Hz)
+	dw 1974*2     ; 19: D#5 (622.3 Hz)
+	dw 1864*2     ; 20: E5  (659.3 Hz)
+	dw 1759*2     ; 21: F5  (698.5 Hz)
+	dw 1661*2     ; 22: F#5 (740.0 Hz)
+	dw 1567*2     ; 23: G5  (784.0 Hz)
+	dw 1479*2     ; 24: G#5 (830.6 Hz)
+	dw 1396*2     ; 25: A5  (880.0 Hz)
+	dw 1318*2     ; 26: A#5 (932.3 Hz)
+	dw 1244*2     ; 27: B5  (987.8 Hz)
 
-    ; --- Octave 6 ---
-    dw 1174*2     ; 28: C6  (1046.5 Hz)
-    dw 1108*2     ; 29: C#6 (1108.7 Hz)
-    dw 1046*2     ; 30: D6  (1174.7 Hz)
-    dw 987 *2     ; 31: D#6 (1244.5 Hz)
+	; --- Octave 6 ---
+	dw 1174*2     ; 28: C6  (1046.5 Hz)
+	dw 1108*2     ; 29: C#6 (1108.7 Hz)
+	dw 1046*2     ; 30: D6  (1174.7 Hz)
+	dw 987 *2     ; 31: D#6 (1244.5 Hz)
 
  end
 

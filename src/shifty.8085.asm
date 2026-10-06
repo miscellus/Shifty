@@ -37,10 +37,6 @@ GameStart:
 	jc GameStart
 	call GameInit
 
-	lxi d, 6000
-	lxi b, 100
-	call Sound_Tone
-
 GameLoop:
 	call ReadInput
 	jc GameLoop ; If none of the movement keys were pressed, jump back
@@ -434,7 +430,19 @@ RemoveGoal:
 
 	lxi h, MissingTargets
 	dcr m
-	jnz .end
+	jz .lastTargetRemoved
+
+	push d
+	push h
+	lxi h, 8092
+	lxi d, 6000
+	call Sound_Tone
+	dcr d
+	call Sound_Tone
+	pop h
+	pop d
+	jmp .end
+.lastTargetRemoved:
 
 	lxi h, Level | 8*24; [HL] => Level base
 .openDoorsLoop:
@@ -450,6 +458,19 @@ RemoveGoal:
 	mov a, l
 	ora a
 	jnz .openDoorsLoop
+
+	; Play door opening sound
+	push d
+	push h
+	lxi h, 12288
+	lxi d, 8000
+	call Sound_Tone
+	lxi d, 4000
+	call Sound_Tone
+	lxi d, 2000
+	call Sound_Tone
+	pop h
+	pop d
 .end:
 	pop h
 	ret
@@ -734,7 +755,6 @@ ReadInput:
 	ora a
 	ret
 
-
 VirtualPad_ReadStable:
 	push d
 
@@ -743,12 +763,7 @@ VirtualPad_ReadStable:
 
 .debounceWait:
 	lxi h, 1024 ; ~10ms delay at 2.4576 MHz
-.delayLoop:
-	dcx h
-	mov a, h
-	ora l
-	jnz .delayLoop
-
+	call Delay
 	call VirtualPad_ReadRaw
 
 	; compare new state [A] with previous state [D]
@@ -845,6 +860,47 @@ Keyboard_ReadRow_NoRestore:
 	in   PortKeyIn
 	cma
 	mov b, a
+	ret
+
+Sound_Tone:
+; [DE] = frequency
+; [HL] = duration in iterations
+; Clobbers [A]
+
+	push h
+	di
+
+	; Set frequency
+	mov a,e
+	out Port81C55TimerLo
+	mov a,d
+	ori 0b01000000
+	out Port81C55TimerHi
+	mvi a, 0b11000011
+	out Port81C55Cmd
+
+	; Start tone
+	in Port81C55B
+	ani 0b11111000
+	ori 0b00100000
+	out Port81C55B
+
+	call Delay
+
+	; Stop tone
+	in Port81C55B
+	ori 0x4
+	out Port81C55B
+
+	ei
+	pop h
+	ret
+
+Delay:
+	dcx h
+	mov a, h
+	ora l
+	jnz Delay
 	ret
 
 TilePtrFromIndex:
@@ -1023,60 +1079,6 @@ SetInterruptMask_09:
 	sim
 	ei
 	ret
-
-
-
-
-Sound_Tone:
-; [DE] = frequency
-; [B] = duration in ???
-	di
-	mov a,e
-	out Port81C55TimerLo
-	mov a,d
-	ori 0x40
-	out Port81C55TimerHi
-	mvi a,0xc3
-	out Port81C55Cmd
-	in Port81C55B
-	ani 0xf8
-	ori 0x20
-	out Port81C55B
-
-.delayLoop:
-	push b
-	lxi b, 303
-
-	call Delay
-	
-	pop b
-	dcr b
-	jnz .delayLoop
-
-	in Port81C55B
-	ori 0x4
-	out Port81C55B
-	ei
-	ret
-
-Delay:
-; [BC] = iterations
-	mov a,c
-.outerLoop:
-	push b
-	mvi c, 0x48
-.innerLoop:
-	dcr c
-	jnz .innerLoop
-	pop b
-	dcr a
-	jnz .outerLoop
-	dcr b
-	jnz Delay
-	ret
-
-
-
 
 ;=======================================
 ; Tile images
