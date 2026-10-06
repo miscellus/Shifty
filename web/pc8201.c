@@ -33,9 +33,44 @@ typedef struct {
     // 32-bit RGBA buffer that JavaScript will read directly to draw to the HTML5 canvas
 } Pc8201Lcd;
 
+typedef struct {
+    uint8_t matrix[9]; // Index 0-7 = PA0-PA7, Index 8 = PB0
+    uint8_t strobe_a;  // State of Port 0xB9 (PA0-PA7)
+    uint8_t strobe_b;  // State of Port 0xBA (PB0)
+} Pc8201Keyboard;
+
+typedef uint8_t Timer_Mode;
+enum {
+    // This-mode transmits a single-
+    // square wave which the first
+    // half of the number of count
+    // is high and remaining 1s low.
+    TIMER_ONE_SHOT_SQUARE = 0,
+
+    // This mode continually transmits
+    // a Mode 0 type square wave.
+    TIMER_CONTINOUS_SQUARE = 1,
+
+    // This mode transmits a L-pulse
+    // (single pulse) during one
+    // clock when finishing the
+    // terminal count.
+    TIMER_ONE_SHOT_PULSE = 2,
+
+    // This mode continually transmits
+    // a Mode 2 type pulse.
+    TIMER_CONTINOUS_PULSE = 3,
+};
+
+enum { MAX_TIMER_COUNT = (1 << 14) - 1 };
+
+typedef struct {
+    uint16_t timer;
+    Timer_Mode timer_mode;
+} Pc8201_81C55;
+
 typedef uint8_t BreakPointKind;
-enum
-{
+enum {
     BP_NONE = 0,
     BP_TEMP = 1,
     BP_PERM = 2,
@@ -55,12 +90,9 @@ typedef struct {
     Pc8201Lcd lcd;
     uint32_t canvas[SCREEN_WIDTH * SCREEN_HEIGHT];
 
-    uint8_t memory[65536];
+    uint8_t memory[65536]; // TODO(jkk): Banking
 
-    // Keyboard Matrix State
-    uint8_t key_matrix[9]; // Index 0-7 = PA0-PA7, Index 8 = PB0
-    uint8_t key_strobe_a;  // State of Port 0xB9 (PA0-PA7)
-    uint8_t key_strobe_b;  // State of Port 0xBA (PB0)
+    Pc8201Keyboard key;
 
     // Debugger support
     BreakPointKind breakpoints[65536];
@@ -116,6 +148,13 @@ static void mem_cb(Vm_8085 *vm, uint16_t addr, bool is_write, uint8_t *in_out_da
     }
 }
 
+static void loop_cb(Vm_8085 *vm) {
+    Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
+
+
+
+}
+
 #ifdef TARGET_DEBUG
 #include <stdio.h>
 #else
@@ -141,7 +180,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
     if (is_write && port == Port81C55A)
     {
-        mach->key_strobe_a = *in_out_data; // Track keyboard strobe
+        mach->key.strobe_a = *in_out_data; // Track keyboard strobe
 
         lcd->driver_select &= 0xff00;
         lcd->driver_select |= *in_out_data;
@@ -150,7 +189,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
     if (is_write && port == Port81C55B)
     {
-        mach->key_strobe_b = *in_out_data; // Track keyboard strobe (PB0)
+        mach->key.strobe_b = *in_out_data; // Track keyboard strobe (PB0)
 
         lcd->driver_select &= 0x00ff;
         lcd->driver_select |= (*in_out_data & 0x3) << 8;
@@ -170,16 +209,16 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
         // Check Port A strobes (PA0 - PA7)
         for (int i = 0; i < 8; i++) {
-            if (!(mach->key_strobe_a & (1 << i))) {
+            if (!(mach->key.strobe_a & (1 << i))) {
                 // Strobe is ACTIVE (0), merge in depressed keys (0) for this row
-                result &= mach->key_matrix[i];
+                result &= mach->key.matrix[i];
             }
         }
 
         // Check Port B strobe (PB0 is bit 0)
-        if (!(mach->key_strobe_b & 0x01)) {
+        if (!(mach->key.strobe_b & 0x01)) {
             // Strobe is ACTIVE (0), merge in depressed keys for PB0 row
-            result &= mach->key_matrix[8];
+            result &= mach->key.matrix[8];
         }
 
         *in_out_data = result;
@@ -261,13 +300,14 @@ DECL_EXPORT void reset_emulator_with_co_file(uint8_t *co_file, int32_t co_file_l
     machine.cpu.sp = 0x9DE4; // Taken directly from the debugger in VirtualT.
 
     for (int i = 0; i < 9; i++) {
-        machine.key_matrix[i] = 0xFF;
+        machine.key.matrix[i] = 0xFF;
     }
-    machine.key_strobe_a = 0xFF;
-    machine.key_strobe_b = 0xFF;
+    machine.key.strobe_a = 0xFF;
+    machine.key.strobe_b = 0xFF;
 
     machine.cpu.io_cb = io_cb;
     machine.cpu.mem_cb = mem_cb;
+    machine.cpu.loop_cb = loop_cb;
     machine.cpu.user_data = (void *)&machine;
 }
 
@@ -410,10 +450,10 @@ DECL_EXPORT void set_key_state(uint32_t row, uint32_t col, bool is_pressed) {
 
     if (is_pressed) {
         // 0 = Depressed
-        machine.key_matrix[row] &= ~(1 << col);
+        machine.key.matrix[row] &= ~(1 << col);
     } else {
         // 1 = Not depressed
-        machine.key_matrix[row] |= (1 << col);
+        machine.key.matrix[row] |= (1 << col);
     }
 }
 
