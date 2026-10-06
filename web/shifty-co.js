@@ -335,6 +335,7 @@
 
                     if (e.code == 'F7') {
                         e.preventDefault();
+                        this.stepInto();
                         this.setPaused(!this.isPaused);
                         return;
                     }
