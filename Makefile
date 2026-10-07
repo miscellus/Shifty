@@ -1,4 +1,5 @@
 WASM_CC := clang
+NATIVE_CC ?= gcc
 PYTHON  := python3
 
 BUILD_DIR := build
@@ -9,6 +10,8 @@ WEB_JS       := $(BUILD_DIR)/shifty-co.js
 WEB_HTML     := $(BUILD_DIR)/shifty-co.html
 WEB_ASSETS   := $(WEB_WASM) $(WEB_JS) $(WEB_HTML) $(SHIFTY)
 
+EMULATOR_BIN := $(BUILD_DIR)/emulator
+
 ASMDIR       := tools/asm8085
 ASMNAME      := asm8085
 ASM          := $(ASMDIR)/$(ASMNAME)
@@ -17,9 +20,22 @@ WASM_SOURCE  := emulator/pc8201.c
 WASM_FLAGS   := -O3 -DTARGET_WEB -nostdlib
 WASM_LDFLAGS := -Wl,--no-entry -Wl,--export-all
 
-.PHONY: all clean asm serve
+# RGFW Native Linker Flags Setup
+UNAME_S := $(shell uname -s)
+NATIVE_LDFLAGS := 
+ifeq ($(UNAME_S),Linux)
+    NATIVE_LDFLAGS += -lX11 -lm
+endif
+ifeq ($(UNAME_S),Darwin)
+    NATIVE_LDFLAGS += -framework Foundation -framework AppKit -framework CoreVideo
+endif
+ifneq (,$(findstring MINGW,$(UNAME_S)))
+    NATIVE_LDFLAGS += -lgdi32 -lwinmm
+endif
 
-all: $(WEB_ASSETS) build/sndtes.co
+.PHONY: all clean asm serve emulator
+
+all: $(WEB_ASSETS) emulator build/sndtes.co
 
 build/sndtes.co: src/test_sound.8085.asm | $(BUILD_DIR)
 	$(ASM) -c -o $@ $<
@@ -27,6 +43,7 @@ build/sndtes.co: src/test_sound.8085.asm | $(BUILD_DIR)
 $(BUILD_DIR):
 	mkdir -p $@
 
+# --- Web Assembly Target ---
 $(WEB_WASM): $(WASM_SOURCE) | $(BUILD_DIR)
 	$(WASM_CC) --target=wasm32 \
 		$(WASM_FLAGS) \
@@ -38,6 +55,12 @@ $(WEB_JS): emulator/shifty-co.js | $(BUILD_DIR)
 
 $(WEB_HTML): emulator/shifty-co.html | $(BUILD_DIR)
 	cp $< $@
+
+emulator: $(EMULATOR_BIN)
+
+$(EMULATOR_BIN): $(WASM_SOURCE) | $(BUILD_DIR)
+	$(NATIVE_CC) -O3 -g -o $@ $< $(NATIVE_LDFLAGS)
+
 
 $(SHIFTY): \
 		src/shifty.8085.asm \
