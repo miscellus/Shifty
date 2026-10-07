@@ -13,7 +13,7 @@ ASMDIR       := tools/asm8085
 ASMNAME      := asm8085
 ASM          := $(ASMDIR)/$(ASMNAME)
 
-WASM_SOURCE  := web/pc8201.c
+WASM_SOURCE  := emulator/pc8201.c
 WASM_FLAGS   := -O3 -DTARGET_WEB -nostdlib
 WASM_LDFLAGS := -Wl,--no-entry -Wl,--export-all
 
@@ -33,10 +33,10 @@ $(WEB_WASM): $(WASM_SOURCE) | $(BUILD_DIR)
 		$(WASM_LDFLAGS) \
 		-o $@ $<
 
-$(WEB_JS): web/shifty-co.js | $(BUILD_DIR)
+$(WEB_JS): emulator/shifty-co.js | $(BUILD_DIR)
 	cp $< $@
 
-$(WEB_HTML): web/shifty-co.html | $(BUILD_DIR)
+$(WEB_HTML): emulator/shifty-co.html | $(BUILD_DIR)
 	cp $< $@
 
 $(SHIFTY): \

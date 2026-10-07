@@ -94,6 +94,8 @@ typedef struct {
 
     Pc8201Keyboard key;
 
+    Pc8201_81C55 ic_81c55;
+
     // Debugger support
     BreakPointKind breakpoints[65536];
     DebuggerLoc address_to_line[65536];
