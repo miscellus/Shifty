@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <stdbool.h>
 
 #define VM8085_IMPLEMENTATION
 #include "vm8085.h"
@@ -8,6 +9,8 @@
 #define memcpy __builtin_memcpy
 #else
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 #endif
 
 #define SCREEN_WIDTH 240
@@ -313,9 +316,11 @@ DECL_EXPORT void reset_emulator_with_co_file(uint8_t *co_file, int32_t co_file_l
     machine.cpu.user_data = (void *)&machine;
 }
 
+#ifdef TARGET_WEB
 // The WebAssembly linker automatically provides the __heap_base symbol.
 // It marks the end of statically allocated memory (like global variables)
 // and represents the safe starting point for our dynamic heap.
+
 extern unsigned char __heap_base;
 const size_t WASM_PAGE_SIZE = 1 << 16;
 
@@ -467,14 +472,99 @@ DECL_EXPORT DebuggerLoc *get_source_map_ptr(void) {
     return machine.address_to_line;
 }
 
-#ifdef TARGET_DEBUG
-int main(void)
-{
-    reset_emulator_with_co_file(42);
-    while (true)
-    {
-        run_frame(40);
+
+// --- NATIVE DESKTOP FRONTEND (RGFW) ---
+#ifndef TARGET_WEB
+#define RGFW_BUFFER
+#define RGFW_IMPLEMENTATION
+#include "RGFW.h"
+
+void handle_native_key(uint32_t keycode, bool pressed) {
+    uint32_t row = 0, col = 0;
+    bool mapped = false;
+
+    // Example mappings: Map RGFW_key to PC8201 matrix coordinates
+    // (You will need to fill out the true hardware matrix rows/cols)
+    switch (keycode) {
+        case RGFW_return: row = 0; col = 0; mapped = true; break;
+        case RGFW_space:  row = 1; col = 0; mapped = true; break;
+        case RGFW_Up:     row = 2; col = 0; mapped = true; break;
+        case RGFW_Down:   row = 2; col = 1; mapped = true; break;
+        case RGFW_Left:   row = 2; col = 2; mapped = true; break;
+        case RGFW_Right:  row = 2; col = 3; mapped = true; break;
+        default:
+            // Fallback template for alphabetic keys
+            if (keycode >= 'A' && keycode <= 'Z') {
+                row = 3 + ((keycode - 'A') / 8);
+                col = (keycode - 'A') % 8;
+                mapped = true;
+            }
+            break;
     }
+
+    if (mapped) {
+        set_key_state(row, col, pressed);
+    }
+}
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        printf("Usage: %s <program.co>\n", argv[0]);
+        return 1;
+    }
+
+    FILE* f = fopen(argv[1], "rb");
+    if (!f) {
+        printf("Error: Could not open %s\n", argv[1]);
+        return 1;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t* co_file = (uint8_t*)malloc(sz);
+    fread(co_file, 1, sz, f);
+    fclose(f);
+
+    reset_emulator_with_co_file(co_file, sz);
+
+    // Scale up the tiny 240x64 display so it's readable
+    int scale = 4;
+    RGFW_window* win = RGFW_createWindow("PC8201 Emulator", 
+                                         RGFW_RECT(0, 0, SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale), 
+                                         RGFW_CENTER);
+
+    // Approx 40,000 t-states per 60Hz frame for a ~2.4MHz CPU
+    int32_t t_states_per_frame = 40000;
+
+    while (!RGFW_window_shouldClose(win)) {
+        // Handle input events
+        while (RGFW_window_checkEvent(win)) {
+            if (win->event.type == RGFW_keyPressed || win->event.type == RGFW_keyReleased) {
+                bool pressed = (win->event.type == RGFW_keyPressed);
+                handle_native_key(win->event.keyCode, pressed);
+            }
+        }
+
+        // Run the emulator for one frame
+        run(t_states_per_frame);
+
+        // Scale up the 240x64 emulator buffer into the RGFW window buffer
+        uint32_t* src = get_canvas_buffer();
+        uint32_t* dst = (uint32_t*)win->buffer;
+
+        for (int y = 0; y < SCREEN_HEIGHT * scale; y++) {
+            for (int x = 0; x < SCREEN_WIDTH * scale; x++) {
+                // Nearest neighbor scaling
+                dst[y * (SCREEN_WIDTH * scale) + x] = src[(y / scale) * SCREEN_WIDTH + (x / scale)];
+            }
+        }
+
+        RGFW_window_swapBuffers(win);
+    }
+
+    RGFW_window_close(win);
+    free(co_file);
     return 0;
 }
 #endif
