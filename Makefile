@@ -1,5 +1,4 @@
 WASM_CC := clang
-EMULATOR_CC ?= gcc
 PYTHON  := python3
 
 BUILD_DIR := build
@@ -10,8 +9,6 @@ WEB_JS       := $(BUILD_DIR)/shifty-co.js
 WEB_HTML     := $(BUILD_DIR)/shifty-co.html
 WEB_ASSETS   := $(WEB_WASM) $(WEB_JS) $(WEB_HTML) $(SHIFTY)
 
-EMULATOR_BIN := $(BUILD_DIR)/emulator
-
 ASMDIR       := tools/asm8085
 ASMNAME      := asm8085
 ASM          := $(ASMDIR)/$(ASMNAME)
@@ -20,38 +17,9 @@ WASM_SOURCE  := emulator/pc8201.c
 WASM_FLAGS   := -O3 -DTARGET_WEB -nostdlib
 WASM_LDFLAGS := -Wl,--no-entry -Wl,--export-all
 
-# RGFW Native Linker Flags Setup
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Linux)
-	PLATFORM = LINUX
-endif
-ifeq ($(UNAME_S),Darwin)
-	PLATFORM = MACOS
-endif
-ifneq (,$(findstring MINGW,$(UNAME_S)))
-	PLATFORM = WIN32
-endif
+include emulator/emulator.mk
 
-BUILD_TYPE ?= DEBUG
-
-EMULATOR_CFLAGS_LINUX_DEBUG := -O0 -g
-EMULATOR_CFLAGS_LINUX_RELEASE := -O3
-
-EMULATOR_CFLAGS_MACOS_DEBUG := # TODO
-EMULATOR_CFLAGS_MACOS_RELEASE := # TODO
-
-EMULATOR_CFLAGS_WIN32_DEBUG := # TODO
-EMULATOR_CFLAGS_WIN32_RELEASE := # TODO
-
-EMULATOR_CFLAGS := -Wall -Wextra
-EMULATOR_CFLAGS += ${EMULATOR_CFLAGS_${PLATFORM}_${BUILD_TYPE}}
-
-EMULATOR_LDFLAGS_LINUX := -lSDL3 -lOpenGL -lm
-EMULATOR_LDFLAGS_MACOS := # TODO
-EMULATOR_LDFLAGS_WIN32 := # TODO
-EMULATOR_LDFLAGS := ${EMULATOR_LDFLAGS_${PLATFORM}}
-
-.PHONY: all clean asm serve emulator
+.PHONY: all clean asm serve
 
 all: $(WEB_ASSETS) emulator build/sndtes.co
 
@@ -73,12 +41,6 @@ $(WEB_JS): emulator/shifty-co.js | $(BUILD_DIR)
 
 $(WEB_HTML): emulator/shifty-co.html | $(BUILD_DIR)
 	cp $< $@
-
-emulator: $(EMULATOR_BIN)
-
-$(EMULATOR_BIN): $(WASM_SOURCE) | $(BUILD_DIR)
-	$(EMULATOR_CC) -DTARGET_DESKTOP $(EMULATOR_CFLAGS) -o $@ $< $(EMULATOR_LDFLAGS)
-
 
 $(SHIFTY): \
 		src/shifty.8085.asm \
