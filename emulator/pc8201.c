@@ -7,10 +7,12 @@
 #ifdef TARGET_WEB
 #define memset __builtin_memset
 #define memcpy __builtin_memcpy
-#else
+#define die(...) ((void)0)
+#elif TARGET_DESKTOP
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(0)
 #endif
 
 #define SCREEN_WIDTH 240
@@ -155,15 +157,13 @@ static void mem_cb(Vm_8085 *vm, uint16_t addr, bool is_write, uint8_t *in_out_da
 
 static void loop_cb(Vm_8085 *vm) {
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
-
-
-
+    (void)mach;
 }
 
 #ifdef TARGET_DEBUG
 #include <stdio.h>
 #else
-#define fprintf(...)
+#define fprintf(...) ((void)0)
 #endif
 
 static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data)
@@ -283,17 +283,28 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     return false;
 }
 
+#ifdef TARGET_DESKTOP
+#include <stdlib.h>
+#endif
+
 DECL_EXPORT void reset_emulator_with_co_file(uint8_t *co_file, int32_t co_file_len) {
     // Clear memory & registers
 
-    // for (uint32_t i = 0; i < sizeof(machine); ++i) *(uint8_t*)(&machine) = 0;
-    memset(&machine, 0, sizeof(machine));
+    if (co_file_len < 6) {
+        die("A valid CO file must be at least as big as the 6 byte header.\n");
+    }
 
-    uint16_t program_base_addr = co_file[0] | ((uint16_t)co_file[1] << 8);
-    uint16_t program_length = co_file[2] | ((uint16_t)co_file[3] << 8);
-    uint16_t program_entry_addr  = co_file[4] | ((uint16_t)co_file[5] << 8);
-    uint8_t *program = co_file + 6;
+    uint16_t program_base_addr  = co_file[0] | ((uint16_t)co_file[1] << 8);
+    uint16_t program_length     = co_file[2] | ((uint16_t)co_file[3] << 8);
+    uint16_t program_entry_addr = co_file[4] | ((uint16_t)co_file[5] << 8);
+    uint8_t *program            = co_file + 6;
+
+    if (co_file_len != 6 + program_length) {
+        die("CO file length does not match file header.\n");
+    }
+
     // Load the hardcoded binary directly into the CPU's memory array at address 0x0000
+    memset(&machine, 0, sizeof(machine));
     memcpy(machine.memory + program_base_addr, program, program_length);
 
     machine.memory[0] = 0xCD; // CALL
@@ -359,6 +370,11 @@ DECL_EXPORT void* allocate(size_t size) {
 
     return allocated_memory;
 }
+#else
+DECL_EXPORT void* allocate(size_t size) {
+    return malloc(size);
+}
+#endif // TARGET_WEB
 
 DECL_EXPORT uint32_t* get_canvas_buffer(void) {
     return machine.canvas;
@@ -472,99 +488,706 @@ DECL_EXPORT DebuggerLoc *get_source_map_ptr(void) {
     return machine.address_to_line;
 }
 
+#if 0
+#ifdef TARGET_DESKTOP
 
-// --- NATIVE DESKTOP FRONTEND (RGFW) ---
-#ifndef TARGET_WEB
-#define RGFW_BUFFER
-#define RGFW_IMPLEMENTATION
-#include "RGFW.h"
+#include <SDL3/SDL.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdbool.h>
 
-void handle_native_key(uint32_t keycode, bool pressed) {
-    uint32_t row = 0, col = 0;
-    bool mapped = false;
+#define SCREEN_WIDTH 240
+#define SCREEN_HEIGHT 64
+#define CPU_CLOCK_FREQ 2457600.0 // 2.4576 MHz
 
-    // Example mappings: Map RGFW_key to PC8201 matrix coordinates
-    // (You will need to fill out the true hardware matrix rows/cols)
-    switch (keycode) {
-        case RGFW_return: row = 0; col = 0; mapped = true; break;
-        case RGFW_space:  row = 1; col = 0; mapped = true; break;
-        case RGFW_Up:     row = 2; col = 0; mapped = true; break;
-        case RGFW_Down:   row = 2; col = 1; mapped = true; break;
-        case RGFW_Left:   row = 2; col = 2; mapped = true; break;
-        case RGFW_Right:  row = 2; col = 3; mapped = true; break;
-        default:
-            // Fallback template for alphabetic keys
-            if (keycode >= 'A' && keycode <= 'Z') {
-                row = 3 + ((keycode - 'A') / 8);
-                col = (keycode - 'A') % 8;
-                mapped = true;
-            }
-            break;
+// Helper to translate SDL keys to the PC-8201 9x8 keyboard matrix
+static void handle_sdl_key(SDL_Keycode key, bool is_pressed) {
+    int row = -1, col = -1;
+
+    switch (key) {
+        // Row 0
+        case SDLK_Z:          row = 0; col = 0; break;
+        case SDLK_X:          row = 0; col = 1; break;
+        case SDLK_C:          row = 0; col = 2; break;
+        case SDLK_V:          row = 0; col = 3; break;
+        case SDLK_B:          row = 0; col = 4; break;
+        case SDLK_N:          row = 0; col = 5; break;
+        case SDLK_M:          row = 0; col = 6; break;
+        case SDLK_COMMA:      row = 0; col = 7; break;
+
+        // Row 1
+        case SDLK_A:          row = 1; col = 0; break;
+        case SDLK_S:          row = 1; col = 1; break;
+        case SDLK_D:          row = 1; col = 2; break;
+        case SDLK_F:          row = 1; col = 3; break;
+        case SDLK_G:          row = 1; col = 4; break;
+        case SDLK_H:          row = 1; col = 5; break;
+        case SDLK_J:          row = 1; col = 6; break;
+        case SDLK_K:          row = 1; col = 7; break;
+
+        // Row 2
+        case SDLK_Q:          row = 2; col = 0; break;
+        case SDLK_W:          row = 2; col = 1; break;
+        case SDLK_E:          row = 2; col = 2; break;
+        case SDLK_R:          row = 2; col = 3; break;
+        case SDLK_T:          row = 2; col = 4; break;
+        case SDLK_Y:          row = 2; col = 5; break;
+        case SDLK_U:          row = 2; col = 6; break;
+        case SDLK_I:          row = 2; col = 7; break;
+
+        // Row 3
+        case SDLK_O:          row = 3; col = 0; break;
+        case SDLK_P:          row = 3; col = 1; break;
+        case SDLK_APOSTROPHE: row = 3; col = 2; break;
+        case SDLK_LEFTBRACKET:row = 3; col = 3; break;
+        case SDLK_BACKSLASH:  row = 3; col = 4; break;
+        case SDLK_RIGHTBRACKET:row = 3; col = 5; break;
+        case SDLK_GRAVE:      row = 3; col = 6; break;
+        case SDLK_SLASH:      row = 3; col = 7; break;
+
+        // Row 4
+        case SDLK_1:          row = 4; col = 0; break;
+        case SDLK_2:          row = 4; col = 1; break;
+        case SDLK_3:          row = 4; col = 2; break;
+        case SDLK_4:          row = 4; col = 3; break;
+        case SDLK_5:          row = 4; col = 4; break;
+        case SDLK_6:          row = 4; col = 5; break;
+        case SDLK_7:          row = 4; col = 6; break;
+        case SDLK_8:          row = 4; col = 7; break;
+
+        // Row 5
+        case SDLK_9:          row = 5; col = 0; break;
+        case SDLK_0:          row = 5; col = 1; break;
+        case SDLK_SEMICOLON:  row = 5; col = 2; break;
+        case SDLK_MINUS:      row = 5; col = 3; break;
+        case SDLK_EQUALS:     row = 5; col = 4; break;
+        case SDLK_SPACE:      row = 5; col = 5; break;
+        case SDLK_INSERT:     row = 5; col = 6; break;
+        case SDLK_PERIOD:     row = 5; col = 7; break;
+
+        // Row 6
+        case SDLK_BACKSPACE:  row = 6; col = 0; break;
+        case SDLK_UP:         row = 6; col = 1; break;
+        case SDLK_DOWN:       row = 6; col = 2; break;
+        case SDLK_LEFT:       row = 6; col = 3; break;
+        case SDLK_RIGHT:      row = 6; col = 4; break;
+        case SDLK_TAB:        row = 6; col = 5; break;
+        case SDLK_ESCAPE:     row = 6; col = 6; break;
+        case SDLK_RETURN:     row = 6; col = 7; break;
+
+        // Row 7
+        case SDLK_F1:         row = 7; col = 0; break;
+        case SDLK_F2:         row = 7; col = 1; break;
+        case SDLK_F3:         row = 7; col = 2; break;
+        case SDLK_F4:         row = 7; col = 3; break;
+        case SDLK_F5:         row = 7; col = 4; break;
+        case SDLK_PAUSE:      row = 7; col = 7; break;
+
+        // Row 8 (Modifiers)
+        case SDLK_LSHIFT:
+        case SDLK_RSHIFT:     row = 8; col = 0; break;
+        case SDLK_LCTRL:
+        case SDLK_RCTRL:      row = 8; col = 1; break;
+        case SDLK_LALT:
+        case SDLK_RALT:       row = 8; col = 2; break;
+        case SDLK_CAPSLOCK:   row = 8; col = 4; break;
+
+        default: break;
     }
 
-    if (mapped) {
-        set_key_state(row, col, pressed);
+    if (row != -1 && col != -1) {
+        set_key_state(row, col, is_pressed);
     }
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char* argv[]) {
     if (argc < 2) {
-        printf("Usage: %s <program.co>\n", argv[0]);
+        SDL_Log("Usage: %s <path_to_co_file>", argv[0]);
         return 1;
     }
 
-    FILE* f = fopen(argv[1], "rb");
-    if (!f) {
-        printf("Error: Could not open %s\n", argv[1]);
+    // --- 1. Load .CO File ---
+    FILE *co_file = fopen(argv[1], "rb");
+    if (co_file == NULL) {
+        SDL_Log("Could not open CO file '%s'", argv[1]);
         return 1;
     }
 
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    uint8_t* co_file = (uint8_t*)malloc(sz);
-    fread(co_file, 1, sz, f);
-    fclose(f);
+    fseek(co_file, 0, SEEK_END);
+    long file_size = ftell(co_file);
+    fseek(co_file, 0, SEEK_SET);
 
-    reset_emulator_with_co_file(co_file, sz);
+    if (file_size <= 6) { // CO files must have at least a 6-byte header
+        SDL_Log("Invalid CO file size: %ld bytes", file_size);
+        fclose(co_file);
+        return 1;
+    }
 
-    // Scale up the tiny 240x64 display so it's readable
-    int scale = 4;
-    RGFW_window* win = RGFW_createWindow("PC8201 Emulator", 
-                                         RGFW_RECT(0, 0, SCREEN_WIDTH * scale, SCREEN_HEIGHT * scale), 
-                                         RGFW_CENTER);
+    uint8_t *co_file_data = (uint8_t *)allocate((size_t)file_size);
+    if (!co_file_data) {
+        SDL_Log("Failed to allocate memory for CO file");
+        fclose(co_file);
+        return 1;
+    }
 
-    // Approx 40,000 t-states per 60Hz frame for a ~2.4MHz CPU
-    int32_t t_states_per_frame = 40000;
+    size_t bytes_read = fread(co_file_data, 1, (size_t)file_size, co_file);
+    fclose(co_file);
 
-    while (!RGFW_window_shouldClose(win)) {
-        // Handle input events
-        while (RGFW_window_checkEvent(win)) {
-            if (win->event.type == RGFW_keyPressed || win->event.type == RGFW_keyReleased) {
-                bool pressed = (win->event.type == RGFW_keyPressed);
-                handle_native_key(win->event.keyCode, pressed);
+    if (bytes_read != (size_t)file_size) {
+        SDL_Log("Failed to read complete file data");
+        free(co_file_data);
+        return 1;
+    }
+
+    // --- 2. Initialize Emulator State ---
+    reset_emulator_with_co_file(co_file_data, (int32_t)file_size);
+    free(co_file_data); // Memory was copied into machine.memory
+
+    // --- 3. SDL3 Initialization ---
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+        return 1;
+    }
+
+    SDL_Window* window = SDL_CreateWindow(
+        "PC8201 Emulator",
+        SCREEN_WIDTH * 3,
+        SCREEN_HEIGHT * 3,
+        SDL_WINDOW_RESIZABLE
+    );
+
+    if (!window) {
+        SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
+        SDL_Quit();
+        return 1;
+    }
+
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, NULL);
+    if (!renderer) {
+        SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+
+    SDL_SetRenderVSync(renderer, 1);
+
+    SDL_Texture* texture = SDL_CreateTexture(
+        renderer,
+        SDL_PIXELFORMAT_RGBA8888,
+        SDL_TEXTUREACCESS_STREAMING,
+        SCREEN_WIDTH,
+        SCREEN_HEIGHT
+    );
+
+    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+
+    // --- 4. Main Loop ---
+    bool running = true;
+    SDL_Event event;
+
+    uint64_t last_time = SDL_GetTicksNS();
+    int32_t t_states_excess = 0;
+
+    while (running) {
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_QUIT) {
+                running = false;
+            }
+            else if (event.type == SDL_EVENT_KEY_DOWN) {
+                if (!event.key.repeat) {
+                    handle_sdl_key(event.key.key, true);
+                }
+            }
+            else if (event.type == SDL_EVENT_KEY_UP) {
+                handle_sdl_key(event.key.key, false);
             }
         }
 
-        // Run the emulator for one frame
-        run(t_states_per_frame);
+        // --- Delta Time & Dynamic Cycle Execution (matching JS logic) ---
+        uint64_t current_time = SDL_GetTicksNS();
+        double delta_time = (double)(current_time - last_time) / 1e9;
+        if (delta_time > 0.1) delta_time = 0.1; // Clamp max dt to prevent huge execution jumps
+        last_time = current_time;
 
-        // Scale up the 240x64 emulator buffer into the RGFW window buffer
+        int32_t t_state_goal = (int32_t)(CPU_CLOCK_FREQ * delta_time) - t_states_excess;
+
+        if (t_state_goal > 0) {
+            int32_t res = run(t_state_goal);
+            t_states_excess = (res < 0) ? 0 : res; // Handle breakpoint pause
+        }
+
+        // --- Rendering ---
         uint32_t* src = get_canvas_buffer();
-        uint32_t* dst = (uint32_t*)win->buffer;
+        SDL_UpdateTexture(texture, NULL, src, SCREEN_WIDTH * sizeof(uint32_t));
 
-        for (int y = 0; y < SCREEN_HEIGHT * scale; y++) {
-            for (int x = 0; x < SCREEN_WIDTH * scale; x++) {
-                // Nearest neighbor scaling
-                dst[y * (SCREEN_WIDTH * scale) + x] = src[(y / scale) * SCREEN_WIDTH + (x / scale)];
-            }
-        }
-
-        RGFW_window_swapBuffers(win);
+        SDL_RenderClear(renderer);
+        SDL_RenderTexture(renderer, texture, NULL, NULL);
+        SDL_RenderPresent(renderer);
     }
 
-    RGFW_window_close(win);
-    free(co_file);
+    // Cleanup
+    SDL_DestroyTexture(texture);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+
     return 0;
 }
+
+#endif // TARGET_DESKTOP
+
+#else
+
+#ifdef TARGET_DESKTOP
+
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_opengl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdbool.h>
+
+#define SCREEN_WIDTH 240
+#define SCREEN_HEIGHT 64
+#define CPU_CLOCK_FREQ 2457600.0 // 2.4576 MHz
+
+// Helper to translate SDL keys to the PC-8201 9x8 keyboard matrix
+static void handle_sdl_key(SDL_Keycode key, bool is_pressed) {
+    int row = -1, col = -1;
+
+    switch (key) {
+        // Row 0
+        case SDLK_Z:          row = 0; col = 0; break;
+        case SDLK_X:          row = 0; col = 1; break;
+        case SDLK_C:          row = 0; col = 2; break;
+        case SDLK_V:          row = 0; col = 3; break;
+        case SDLK_B:          row = 0; col = 4; break;
+        case SDLK_N:          row = 0; col = 5; break;
+        case SDLK_M:          row = 0; col = 6; break;
+        case SDLK_COMMA:      row = 0; col = 7; break;
+
+        // Row 1
+        case SDLK_A:          row = 1; col = 0; break;
+        case SDLK_S:          row = 1; col = 1; break;
+        case SDLK_D:          row = 1; col = 2; break;
+        case SDLK_F:          row = 1; col = 3; break;
+        case SDLK_G:          row = 1; col = 4; break;
+        case SDLK_H:          row = 1; col = 5; break;
+        case SDLK_J:          row = 1; col = 6; break;
+        case SDLK_K:          row = 1; col = 7; break;
+
+        // Row 2
+        case SDLK_Q:          row = 2; col = 0; break;
+        case SDLK_W:          row = 2; col = 1; break;
+        case SDLK_E:          row = 2; col = 2; break;
+        case SDLK_R:          row = 2; col = 3; break;
+        case SDLK_T:          row = 2; col = 4; break;
+        case SDLK_Y:          row = 2; col = 5; break;
+        case SDLK_U:          row = 2; col = 6; break;
+        case SDLK_I:          row = 2; col = 7; break;
+
+        // Row 3
+        case SDLK_O:          row = 3; col = 0; break;
+        case SDLK_P:          row = 3; col = 1; break;
+        case SDLK_APOSTROPHE: row = 3; col = 2; break;
+        case SDLK_LEFTBRACKET:row = 3; col = 3; break;
+        case SDLK_BACKSLASH:  row = 3; col = 4; break;
+        case SDLK_RIGHTBRACKET:row = 3; col = 5; break;
+        case SDLK_GRAVE:      row = 3; col = 6; break;
+        case SDLK_SLASH:      row = 3; col = 7; break;
+
+        // Row 4
+        case SDLK_1:          row = 4; col = 0; break;
+        case SDLK_2:          row = 4; col = 1; break;
+        case SDLK_3:          row = 4; col = 2; break;
+        case SDLK_4:          row = 4; col = 3; break;
+        case SDLK_5:          row = 4; col = 4; break;
+        case SDLK_6:          row = 4; col = 5; break;
+        case SDLK_7:          row = 4; col = 6; break;
+        case SDLK_8:          row = 4; col = 7; break;
+
+        // Row 5
+        case SDLK_9:          row = 5; col = 0; break;
+        case SDLK_0:          row = 5; col = 1; break;
+        case SDLK_SEMICOLON:  row = 5; col = 2; break;
+        case SDLK_MINUS:      row = 5; col = 3; break;
+        case SDLK_EQUALS:     row = 5; col = 4; break;
+        case SDLK_SPACE:      row = 5; col = 5; break;
+        case SDLK_INSERT:     row = 5; col = 6; break;
+        case SDLK_PERIOD:     row = 5; col = 7; break;
+
+        // Row 6
+        case SDLK_BACKSPACE:  row = 6; col = 0; break;
+        case SDLK_UP:         row = 6; col = 1; break;
+        case SDLK_DOWN:       row = 6; col = 2; break;
+        case SDLK_LEFT:       row = 6; col = 3; break;
+        case SDLK_RIGHT:      row = 6; col = 4; break;
+        case SDLK_TAB:        row = 6; col = 5; break;
+        case SDLK_ESCAPE:     row = 6; col = 6; break;
+        case SDLK_RETURN:     row = 6; col = 7; break;
+
+        // Row 7
+        case SDLK_F1:         row = 7; col = 0; break;
+        case SDLK_F2:         row = 7; col = 1; break;
+        case SDLK_F3:         row = 7; col = 2; break;
+        case SDLK_F4:         row = 7; col = 3; break;
+        case SDLK_F5:         row = 7; col = 4; break;
+        case SDLK_PAUSE:      row = 7; col = 7; break;
+
+        // Row 8 (Modifiers)
+        case SDLK_LSHIFT:
+        case SDLK_RSHIFT:     row = 8; col = 0; break;
+        case SDLK_LCTRL:
+        case SDLK_RCTRL:      row = 8; col = 1; break;
+        case SDLK_LALT:
+        case SDLK_RALT:       row = 8; col = 2; break;
+        case SDLK_CAPSLOCK:   row = 8; col = 4; break;
+
+        default: break;
+    }
+
+    if (row != -1 && col != -1) {
+        set_key_state(row, col, is_pressed);
+    }
+}
+
+// --- Shaders ---
+const char* vertex_shader_src =
+    "#version 300 es\n"
+    "in vec2 a_position;\n"
+    "out vec2 v_texCoord;\n"
+    "void main() {\n"
+    "    gl_Position = vec4(a_position, 0.0, 1.0);\n"
+    "    v_texCoord = a_position * 0.5 + 0.5;\n"
+    "    v_texCoord.y = 1.0 - v_texCoord.y;\n" // Handles OpenGL bottom-up vs SDL top-down
+    "}\n";
+
+const char* fragment_shader_src =
+    "#version 300 es\n"
+    "precision mediump float;\n"
+    "in vec2 v_texCoord;\n"
+    "out vec4 fragColor;\n"
+    "uniform sampler2D u_image;\n"
+    "uniform vec2 u_resolution;\n"
+    "uniform vec2 u_aaWidth;\n"
+    "uniform vec3 u_colorBg;\n"
+    "uniform vec3 u_colorPixel;\n"
+    "uniform vec3 u_colorShadow;\n"
+    "const float PIXEL_GAP = 0.1;\n"
+    "const vec2 SHADOW_OFFSET = vec2(0.20, 0.25);\n"
+    "const float CONTRAST = 1.00;\n"
+    "const float BRIGHTNESS = 0.0;\n"
+    "float getPixelMask(vec2 gridFract, vec2 aaWidth) {\n"
+    "    vec2 bl = smoothstep(vec2(PIXEL_GAP) - aaWidth, vec2(PIXEL_GAP) + aaWidth, gridFract);\n"
+    "    vec2 tr = smoothstep(vec2(PIXEL_GAP) - aaWidth, vec2(PIXEL_GAP) + aaWidth, 1.0 - gridFract);\n"
+    "    return bl.x * bl.y * tr.x * tr.y;\n"
+    "}\n"
+    "float hash(vec2 p) {\n"
+    "    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453123);\n"
+    "}\n"
+    "void main() {\n"
+    "    vec2 pixelCoord = v_texCoord * u_resolution;\n"
+    "    vec2 gridId = floor(pixelCoord);\n"
+    "    vec2 gridFract = fract(pixelCoord);\n"
+    "    vec2 texUV = (gridId + 0.5) / u_resolution;\n"
+    "    vec4 texColor = texture(u_image, texUV);\n"
+    "    float pixelActive = step(texColor.r, 0.52);\n"
+    "    vec2 shadowCoord = pixelCoord - SHADOW_OFFSET;\n"
+    "    vec2 shadowGridId = floor(shadowCoord);\n"
+    "    vec2 shadowUV = (shadowGridId + 0.5) / u_resolution;\n"
+    "    vec4 shadowTexColor = texture(u_image, shadowUV);\n"
+    "    float shadowActive = step(shadowTexColor.r, 0.52);\n"
+    "    float pixelMask = getPixelMask(gridFract, u_aaWidth);\n"
+    "    float shadowMask = getPixelMask(fract(shadowCoord), u_aaWidth);\n"
+    "    float lightFactor = dot(v_texCoord, vec2(0.7, -0.7)) * 0.1 + 0.95;\n"
+    "    vec3 baseColor = u_colorBg * lightFactor;\n"
+    "    baseColor += (hash(gl_FragCoord.xy) * 0.08);\n"
+    "    vec3 finalColor = baseColor;\n"
+    "    finalColor = mix(finalColor, u_colorShadow, shadowMask * shadowActive);\n"
+    "    finalColor = mix(finalColor, u_colorPixel, pixelMask * pixelActive);\n"
+    "    finalColor *= vec3(1.0, 0.99, 0.96);\n"
+    "    finalColor = (finalColor - 0.5) * CONTRAST + 0.5 + BRIGHTNESS;\n"
+    "    finalColor = clamp(finalColor, 0.0, 1.0);\n"
+    "    fragColor = vec4(finalColor, 1.0);\n"
+    "}\n";
+
+// --- Minimal GL Loader (avoids needing GLEW/GLAD) ---
+struct {
+    PFNGLCREATESHADERPROC CreateShader;
+    PFNGLSHADERSOURCEPROC ShaderSource;
+    PFNGLCOMPILESHADERPROC CompileShader;
+    PFNGLGETSHADERIVPROC GetShaderiv;
+    PFNGLGETSHADERINFOLOGPROC GetShaderInfoLog;
+    PFNGLCREATEPROGRAMPROC CreateProgram;
+    PFNGLATTACHSHADERPROC AttachShader;
+    PFNGLLINKPROGRAMPROC LinkProgram;
+    PFNGLGETPROGRAMIVPROC GetProgramiv;
+    PFNGLUSEPROGRAMPROC UseProgram;
+    PFNGLGENBUFFERSPROC GenBuffers;
+    PFNGLBINDBUFFERPROC BindBuffer;
+    PFNGLBUFFERDATAPROC BufferData;
+    PFNGLGENVERTEXARRAYSPROC GenVertexArrays;
+    PFNGLBINDVERTEXARRAYPROC BindVertexArray;
+    PFNGLGETATTRIBLOCATIONPROC GetAttribLocation;
+    PFNGLVERTEXATTRIBPOINTERPROC VertexAttribPointer;
+    PFNGLENABLEVERTEXATTRIBARRAYPROC EnableVertexAttribArray;
+    PFNGLGETUNIFORMLOCATIONPROC GetUniformLocation;
+    PFNGLUNIFORM1IPROC Uniform1i;
+    PFNGLUNIFORM2FPROC Uniform2f;
+    PFNGLUNIFORM3FPROC Uniform3f;
+    PFNGLACTIVETEXTUREPROC ActiveTexture;
+} gl;
+
+bool load_gl_extensions() {
+    #define LOAD_GL(type, name) \
+        gl.name = (type)SDL_GL_GetProcAddress("gl" #name); \
+        if (!gl.name) { SDL_Log("Failed to load gl" #name); return false; }
+
+    LOAD_GL(PFNGLCREATESHADERPROC, CreateShader);
+    LOAD_GL(PFNGLSHADERSOURCEPROC, ShaderSource);
+    LOAD_GL(PFNGLCOMPILESHADERPROC, CompileShader);
+    LOAD_GL(PFNGLGETSHADERIVPROC, GetShaderiv);
+    LOAD_GL(PFNGLGETSHADERINFOLOGPROC, GetShaderInfoLog);
+    LOAD_GL(PFNGLCREATEPROGRAMPROC, CreateProgram);
+    LOAD_GL(PFNGLATTACHSHADERPROC, AttachShader);
+    LOAD_GL(PFNGLLINKPROGRAMPROC, LinkProgram);
+    LOAD_GL(PFNGLGETPROGRAMIVPROC, GetProgramiv);
+    LOAD_GL(PFNGLUSEPROGRAMPROC, UseProgram);
+    LOAD_GL(PFNGLGENBUFFERSPROC, GenBuffers);
+    LOAD_GL(PFNGLBINDBUFFERPROC, BindBuffer);
+    LOAD_GL(PFNGLBUFFERDATAPROC, BufferData);
+    LOAD_GL(PFNGLGENVERTEXARRAYSPROC, GenVertexArrays);
+    LOAD_GL(PFNGLBINDVERTEXARRAYPROC, BindVertexArray);
+    LOAD_GL(PFNGLGETATTRIBLOCATIONPROC, GetAttribLocation);
+    LOAD_GL(PFNGLVERTEXATTRIBPOINTERPROC, VertexAttribPointer);
+    LOAD_GL(PFNGLENABLEVERTEXATTRIBARRAYPROC, EnableVertexAttribArray);
+    LOAD_GL(PFNGLGETUNIFORMLOCATIONPROC, GetUniformLocation);
+    LOAD_GL(PFNGLUNIFORM1IPROC, Uniform1i);
+    LOAD_GL(PFNGLUNIFORM2FPROC, Uniform2f);
+    LOAD_GL(PFNGLUNIFORM3FPROC, Uniform3f);
+    LOAD_GL(PFNGLACTIVETEXTUREPROC, ActiveTexture);
+    #undef LOAD_GL
+    return true;
+}
+
+GLuint compile_shader(GLenum type, const char* src) {
+    GLuint shader = gl.CreateShader(type);
+    gl.ShaderSource(shader, 1, &src, NULL);
+    gl.CompileShader(shader);
+    GLint success;
+    gl.GetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char info[512];
+        gl.GetShaderInfoLog(shader, 512, NULL, info);
+        SDL_Log("Shader compilation failed: %s", info);
+    }
+    return shader;
+}
+
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        SDL_Log("Usage: %s <path_to_co_file>", argv[0]);
+        return 1;
+    }
+
+    // --- 1. Load .CO File ---
+    FILE *co_file = fopen(argv[1], "rb");
+    if (co_file == NULL) {
+        SDL_Log("Could not open CO file '%s'", argv[1]);
+        return 1;
+    }
+
+    fseek(co_file, 0, SEEK_END);
+    long file_size = ftell(co_file);
+    fseek(co_file, 0, SEEK_SET);
+
+    if (file_size <= 6) {
+        SDL_Log("Invalid CO file size: %ld bytes", file_size);
+        fclose(co_file);
+        return 1;
+    }
+
+    uint8_t *co_file_data = (uint8_t *)allocate((size_t)file_size);
+    if (!co_file_data) {
+        SDL_Log("Failed to allocate memory for CO file");
+        fclose(co_file);
+        return 1;
+    }
+
+    size_t bytes_read = fread(co_file_data, 1, (size_t)file_size, co_file);
+    fclose(co_file);
+
+    if (bytes_read != (size_t)file_size) {
+        SDL_Log("Failed to read complete file data");
+        free(co_file_data);
+        return 1;
+    }
+
+    // --- 2. Initialize Emulator State ---
+    reset_emulator_with_co_file(co_file_data, (int32_t)file_size);
+    free(co_file_data); // Memory was copied into machine.memory
+
+    // --- 3. SDL3 & OpenGL Initialization ---
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+        return 1;
+    }
+
+    // Request OpenGL ES 3.0 context (matches #version 300 es)
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+
+    SDL_Window* window = SDL_CreateWindow(
+        "PC8201 Emulator",
+        SCREEN_WIDTH * 3,
+        SCREEN_HEIGHT * 3,
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL
+    );
+
+    if (!window) {
+        SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
+        SDL_Quit();
+        return 1;
+    }
+
+    SDL_GLContext gl_context = SDL_GL_CreateContext(window);
+    if (!gl_context) {
+        SDL_Log("SDL_GL_CreateContext failed: %s", SDL_GetError());
+        return 1;
+    }
+
+    SDL_GL_SetSwapInterval(1); // VSync
+
+    if (!load_gl_extensions()) {
+        return 1;
+    }
+
+    // --- Shader & Geometry Setup ---
+    GLuint vs = compile_shader(GL_VERTEX_SHADER, vertex_shader_src);
+    GLuint fs = compile_shader(GL_FRAGMENT_SHADER, fragment_shader_src);
+    GLuint shaderProgram = gl.CreateProgram();
+    gl.AttachShader(shaderProgram, vs);
+    gl.AttachShader(shaderProgram, fs);
+    gl.LinkProgram(shaderProgram);
+    gl.UseProgram(shaderProgram);
+
+    // Full screen quad
+    float vertices[] = {
+        -1.0f, -1.0f,
+         1.0f, -1.0f,
+        -1.0f,  1.0f,
+         1.0f,  1.0f
+    };
+
+    GLuint VAO, VBO;
+    gl.GenVertexArrays(1, &VAO);
+    gl.GenBuffers(1, &VBO);
+
+    gl.BindVertexArray(VAO);
+    gl.BindBuffer(GL_ARRAY_BUFFER, VBO);
+    gl.BufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    GLint posAttrib = gl.GetAttribLocation(shaderProgram, "a_position");
+    gl.EnableVertexAttribArray(posAttrib);
+    gl.VertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+
+    // Texture Setup
+    GLuint texture;
+    glGenTextures(1, &texture);
+    gl.ActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    // GL_NEAREST ensures the shader accurately calculates pixel locations
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    // Create an empty texture buffer (RGBA8888 maps perfectly to GL_RGBA/GL_UNSIGNED_BYTE)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCREEN_WIDTH, SCREEN_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+
+    // Set Static Uniforms
+    gl.Uniform1i(gl.GetUniformLocation(shaderProgram, "u_image"), 0);
+    gl.Uniform2f(gl.GetUniformLocation(shaderProgram, "u_resolution"), (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT);
+
+    // Define standard LCD greenish/gray colors for the shader
+    gl.Uniform3f(gl.GetUniformLocation(shaderProgram, "u_colorBg"),     168.f/255.f, 172.0f/255.f, 164.f/255.f);
+    gl.Uniform3f(gl.GetUniformLocation(shaderProgram, "u_colorPixel"),   41.f/255.f,  42.0f/255.f,  40.f/255.f);
+    gl.Uniform3f(gl.GetUniformLocation(shaderProgram, "u_colorShadow"), 129.f/255.f, 130.0f/255.f, 124.f/255.f);
+
+    // --- 4. Main Loop ---
+    bool running = true;
+    SDL_Event event;
+
+    uint64_t last_time = SDL_GetTicksNS();
+    int32_t t_states_excess = 0;
+
+    while (running) {
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_QUIT) {
+                running = false;
+            }
+            else if (event.type == SDL_EVENT_KEY_DOWN) {
+                if (!event.key.repeat) {
+                    handle_sdl_key(event.key.key, true);
+                }
+            }
+            else if (event.type == SDL_EVENT_KEY_UP) {
+                handle_sdl_key(event.key.key, false);
+            }
+        }
+
+        // --- Delta Time & Dynamic Cycle Execution ---
+        uint64_t current_time = SDL_GetTicksNS();
+        double delta_time = (double)(current_time - last_time) / 1e9;
+        if (delta_time > 0.1) delta_time = 0.1;
+        last_time = current_time;
+
+        int32_t t_state_goal = (int32_t)(CPU_CLOCK_FREQ * delta_time) - t_states_excess;
+
+        if (t_state_goal > 0) {
+            int32_t res = run(t_state_goal);
+            t_states_excess = (res < 0) ? 0 : res;
+        }
+
+        // --- Viewport & Uniform Updates ---
+        int win_w, win_h;
+        SDL_GetWindowSizeInPixels(window, &win_w, &win_h);
+        glViewport(0, 0, win_w, win_h);
+
+        // Update AA width uniformly based on scaling to keep pixel boundaries crisp
+        float scale_x = (float)win_w / SCREEN_WIDTH;
+        float scale_y = (float)win_h / SCREEN_HEIGHT;
+        gl.Uniform2f(gl.GetUniformLocation(shaderProgram, "u_aaWidth"), 1.0f / scale_x, 1.0f / scale_y);
+
+        // --- Upload Emulator Display Frame ---
+        uint32_t* src = get_canvas_buffer();
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, src);
+
+        // --- Rendering ---
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        gl.UseProgram(shaderProgram);
+        gl.BindVertexArray(VAO);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        SDL_GL_SwapWindow(window);
+    }
+
+    // Cleanup
+    SDL_GL_DestroyContext(gl_context);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+
+    return 0;
+}
+
+#endif // TARGET_DESKTOP
+
 #endif

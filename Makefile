@@ -1,5 +1,5 @@
 WASM_CC := clang
-NATIVE_CC ?= gcc
+EMULATOR_CC ?= gcc
 PYTHON  := python3
 
 BUILD_DIR := build
@@ -22,16 +22,34 @@ WASM_LDFLAGS := -Wl,--no-entry -Wl,--export-all
 
 # RGFW Native Linker Flags Setup
 UNAME_S := $(shell uname -s)
-NATIVE_LDFLAGS := 
 ifeq ($(UNAME_S),Linux)
-    NATIVE_LDFLAGS += -lX11 -lm
+	PLATFORM = LINUX
 endif
 ifeq ($(UNAME_S),Darwin)
-    NATIVE_LDFLAGS += -framework Foundation -framework AppKit -framework CoreVideo
+	PLATFORM = MACOS
 endif
 ifneq (,$(findstring MINGW,$(UNAME_S)))
-    NATIVE_LDFLAGS += -lgdi32 -lwinmm
+	PLATFORM = WIN32
 endif
+
+BUILD_TYPE ?= DEBUG
+
+EMULATOR_CFLAGS_LINUX_DEBUG := -O0 -g
+EMULATOR_CFLAGS_LINUX_RELEASE := -O3
+
+EMULATOR_CFLAGS_MACOS_DEBUG := # TODO
+EMULATOR_CFLAGS_MACOS_RELEASE := # TODO
+
+EMULATOR_CFLAGS_WIN32_DEBUG := # TODO
+EMULATOR_CFLAGS_WIN32_RELEASE := # TODO
+
+EMULATOR_CFLAGS := -Wall -Wextra
+EMULATOR_CFLAGS += ${EMULATOR_CFLAGS_${PLATFORM}_${BUILD_TYPE}}
+
+EMULATOR_LDFLAGS_LINUX := -lSDL3 -lOpenGL -lm
+EMULATOR_LDFLAGS_MACOS := # TODO
+EMULATOR_LDFLAGS_WIN32 := # TODO
+EMULATOR_LDFLAGS := ${EMULATOR_LDFLAGS_${PLATFORM}}
 
 .PHONY: all clean asm serve emulator
 
@@ -59,7 +77,7 @@ $(WEB_HTML): emulator/shifty-co.html | $(BUILD_DIR)
 emulator: $(EMULATOR_BIN)
 
 $(EMULATOR_BIN): $(WASM_SOURCE) | $(BUILD_DIR)
-	$(NATIVE_CC) -O3 -g -o $@ $< $(NATIVE_LDFLAGS)
+	$(EMULATOR_CC) -DTARGET_DESKTOP $(EMULATOR_CFLAGS) -o $@ $< $(EMULATOR_LDFLAGS)
 
 
 $(SHIFTY): \
