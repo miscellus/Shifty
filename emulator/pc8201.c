@@ -1155,24 +1155,36 @@ int main(int argc, char* argv[]) {
         }
 
         // --- Viewport & Uniform Updates ---
-        int win_w, win_h;
-        SDL_GetWindowSizeInPixels(window, &win_w, &win_h);
-        glViewport(0, 0, win_w, win_h);
+        int window_w, window_h;
+        SDL_GetWindowSizeInPixels(window, &window_w, &window_h);
 
-        // Update AA width uniformly based on scaling to keep pixel boundaries crisp
-        float scale_x = (float)win_w / SCREEN_WIDTH;
-        float scale_y = (float)win_h / SCREEN_HEIGHT;
-        gl.Uniform2f(gl.GetUniformLocation(shaderProgram, "u_aaWidth"), 1.0f / scale_x, 1.0f / scale_y);
+        // Calculate the letterboxed viewport dimensions
+        float scale_w = (float)window_w / SCREEN_WIDTH;
+        float scale_h = (float)window_h / SCREEN_HEIGHT;
+        float scale = (scale_w < scale_h) ? scale_w : scale_h;
 
-        // --- Upload Emulator Display Frame ---
-        uint32_t* src = get_canvas_buffer();
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, src);
+        int viewport_w = (int)(SCREEN_WIDTH * scale);
+        int viewport_h = (int)(SCREEN_HEIGHT * scale);
+        int viewport_x = (window_w - viewport_w) / 2;
+        int viewport_y = (window_h - viewport_h) / 2;
 
-        // --- Rendering ---
+        // Apply the letterboxed viewport
+        glViewport(viewport_x, viewport_y, viewport_w, viewport_h);
+
+        // Clear the ENTIRE window to black before drawing the restricted viewport
+        // (We enable the scissor test briefly to clear outside the glViewport boundaries)
+        glDisable(GL_SCISSOR_TEST);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
+        // Update AA width uniformly based on the single letterbox scale factor
+        gl.Uniform2f(gl.GetUniformLocation(shaderProgram, "u_aaWidth"), 1.0f / scale, 1.0f / scale);
+
+        // --- Upload Emulator Display Frame ---
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, get_canvas_buffer());
+
+        // --- Rendering ---
         gl.UseProgram(shaderProgram);
         gl.BindVertexArray(VAO);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
