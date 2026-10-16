@@ -662,61 +662,45 @@ const char* fragment_shader_src =
     "}\n";
 
 // --- Minimal GL Loader (avoids needing GLEW/GLAD) ---
+#define GL_FUNC_LIST(X) \
+    X(PFNGLCREATESHADERPROC,            CreateShader) \
+    X(PFNGLSHADERSOURCEPROC,            ShaderSource) \
+    X(PFNGLCOMPILESHADERPROC,           CompileShader) \
+    X(PFNGLGETSHADERIVPROC,             GetShaderiv) \
+    X(PFNGLGETSHADERINFOLOGPROC,        GetShaderInfoLog) \
+    X(PFNGLCREATEPROGRAMPROC,           CreateProgram) \
+    X(PFNGLATTACHSHADERPROC,            AttachShader) \
+    X(PFNGLLINKPROGRAMPROC,             LinkProgram) \
+    X(PFNGLGETPROGRAMIVPROC,            GetProgramiv) \
+    X(PFNGLUSEPROGRAMPROC,              UseProgram) \
+    X(PFNGLGENBUFFERSPROC,              GenBuffers) \
+    X(PFNGLBINDBUFFERPROC,              BindBuffer) \
+    X(PFNGLBUFFERDATAPROC,              BufferData) \
+    X(PFNGLGENVERTEXARRAYSPROC,         GenVertexArrays) \
+    X(PFNGLBINDVERTEXARRAYPROC,         BindVertexArray) \
+    X(PFNGLGETATTRIBLOCATIONPROC,       GetAttribLocation) \
+    X(PFNGLVERTEXATTRIBPOINTERPROC,     VertexAttribPointer) \
+    X(PFNGLENABLEVERTEXATTRIBARRAYPROC, EnableVertexAttribArray) \
+    X(PFNGLGETUNIFORMLOCATIONPROC,      GetUniformLocation) \
+    X(PFNGLUNIFORM1IPROC,               Uniform1i) \
+    X(PFNGLUNIFORM2FPROC,               Uniform2f) \
+    X(PFNGLUNIFORM3FPROC,               Uniform3f) \
+    X(PFNGLACTIVETEXTUREPROC,           ActiveTexture) \
+    /*end*/
+
+#define GL_FUNC_STRUCT_DECL(type, name) type name;
+
 struct {
-    PFNGLCREATESHADERPROC CreateShader;
-    PFNGLSHADERSOURCEPROC ShaderSource;
-    PFNGLCOMPILESHADERPROC CompileShader;
-    PFNGLGETSHADERIVPROC GetShaderiv;
-    PFNGLGETSHADERINFOLOGPROC GetShaderInfoLog;
-    PFNGLCREATEPROGRAMPROC CreateProgram;
-    PFNGLATTACHSHADERPROC AttachShader;
-    PFNGLLINKPROGRAMPROC LinkProgram;
-    PFNGLGETPROGRAMIVPROC GetProgramiv;
-    PFNGLUSEPROGRAMPROC UseProgram;
-    PFNGLGENBUFFERSPROC GenBuffers;
-    PFNGLBINDBUFFERPROC BindBuffer;
-    PFNGLBUFFERDATAPROC BufferData;
-    PFNGLGENVERTEXARRAYSPROC GenVertexArrays;
-    PFNGLBINDVERTEXARRAYPROC BindVertexArray;
-    PFNGLGETATTRIBLOCATIONPROC GetAttribLocation;
-    PFNGLVERTEXATTRIBPOINTERPROC VertexAttribPointer;
-    PFNGLENABLEVERTEXATTRIBARRAYPROC EnableVertexAttribArray;
-    PFNGLGETUNIFORMLOCATIONPROC GetUniformLocation;
-    PFNGLUNIFORM1IPROC Uniform1i;
-    PFNGLUNIFORM2FPROC Uniform2f;
-    PFNGLUNIFORM3FPROC Uniform3f;
-    PFNGLACTIVETEXTUREPROC ActiveTexture;
+    GL_FUNC_LIST(GL_FUNC_STRUCT_DECL)
 } gl;
 
 bool load_gl_extensions() {
-    #define LOAD_GL(type, name) \
+    #define GL_FUNC_LOAD(type, name) \
         gl.name = (type)SDL_GL_GetProcAddress("gl" #name); \
         if (!gl.name) { SDL_Log("Failed to load gl" #name); return false; }
 
-    LOAD_GL(PFNGLCREATESHADERPROC, CreateShader);
-    LOAD_GL(PFNGLSHADERSOURCEPROC, ShaderSource);
-    LOAD_GL(PFNGLCOMPILESHADERPROC, CompileShader);
-    LOAD_GL(PFNGLGETSHADERIVPROC, GetShaderiv);
-    LOAD_GL(PFNGLGETSHADERINFOLOGPROC, GetShaderInfoLog);
-    LOAD_GL(PFNGLCREATEPROGRAMPROC, CreateProgram);
-    LOAD_GL(PFNGLATTACHSHADERPROC, AttachShader);
-    LOAD_GL(PFNGLLINKPROGRAMPROC, LinkProgram);
-    LOAD_GL(PFNGLGETPROGRAMIVPROC, GetProgramiv);
-    LOAD_GL(PFNGLUSEPROGRAMPROC, UseProgram);
-    LOAD_GL(PFNGLGENBUFFERSPROC, GenBuffers);
-    LOAD_GL(PFNGLBINDBUFFERPROC, BindBuffer);
-    LOAD_GL(PFNGLBUFFERDATAPROC, BufferData);
-    LOAD_GL(PFNGLGENVERTEXARRAYSPROC, GenVertexArrays);
-    LOAD_GL(PFNGLBINDVERTEXARRAYPROC, BindVertexArray);
-    LOAD_GL(PFNGLGETATTRIBLOCATIONPROC, GetAttribLocation);
-    LOAD_GL(PFNGLVERTEXATTRIBPOINTERPROC, VertexAttribPointer);
-    LOAD_GL(PFNGLENABLEVERTEXATTRIBARRAYPROC, EnableVertexAttribArray);
-    LOAD_GL(PFNGLGETUNIFORMLOCATIONPROC, GetUniformLocation);
-    LOAD_GL(PFNGLUNIFORM1IPROC, Uniform1i);
-    LOAD_GL(PFNGLUNIFORM2FPROC, Uniform2f);
-    LOAD_GL(PFNGLUNIFORM3FPROC, Uniform3f);
-    LOAD_GL(PFNGLACTIVETEXTUREPROC, ActiveTexture);
-    #undef LOAD_GL
+    GL_FUNC_LIST(GL_FUNC_LOAD)
+
     return true;
 }
 
