@@ -17,6 +17,7 @@
 
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 64
+#define CPU_CLOCK_FREQ 2457600.0 // 2.4576 MHz
 
 #ifdef TARGET_WEB
 #define DECL_EXPORT __attribute__((visibility("default")))
@@ -70,8 +71,12 @@ enum {
 enum { MAX_TIMER_COUNT = (1 << 14) - 1 };
 
 typedef struct {
-    uint16_t timer;
-    Timer_Mode timer_mode;
+    struct {
+        uint64_t time_next_decrement;
+        uint16_t value;
+        uint16_t decrement_interval;
+        Timer_Mode mode;
+    } timer;
 } Pc8201_81C55;
 
 typedef uint8_t BreakPointKind;
@@ -157,7 +162,17 @@ static void mem_cb(Vm_8085 *vm, uint16_t addr, bool is_write, uint8_t *in_out_da
 
 static void loop_cb(Vm_8085 *vm) {
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
-    (void)mach;
+    
+    // Calculate time from total_t_states
+
+    while (mach->cpu.total_t_states > mach->ic_81c55.timer.time_next_decrement) {
+        mach->ic_81c55.timer.time_next_decrement += mach->ic_81c55.timer.decrement_interval;
+        if (--mach->ic_81c55.timer.value == 0) {
+            // Cause interrupt
+            ;
+            
+        }
+    }
 }
 
 #ifdef TARGET_DEBUG
@@ -325,6 +340,8 @@ DECL_EXPORT void reset_emulator_with_co_file(uint8_t *co_file, int32_t co_file_l
     machine.cpu.mem_cb = mem_cb;
     machine.cpu.loop_cb = loop_cb;
     machine.cpu.user_data = (void *)&machine;
+
+    machine.ic_81c55.timer.decrement_interval = 16384;
 }
 
 #ifdef TARGET_WEB
@@ -497,9 +514,6 @@ DECL_EXPORT DebuggerLoc *get_source_map_ptr(void) {
 #include <stdint.h>
 #include <stdbool.h>
 
-#define SCREEN_WIDTH 240
-#define SCREEN_HEIGHT 64
-#define CPU_CLOCK_FREQ 2457600.0 // 2.4576 MHz
 
 // Helper to translate SDL keys to the PC-8201 9x8 keyboard matrix
 static void handle_sdl_key(SDL_Keycode key, bool is_pressed) {
