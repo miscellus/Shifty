@@ -72,9 +72,17 @@ enum { MAX_TIMER_COUNT = (1 << 14) - 1 };
 
 typedef struct {
     struct {
-        uint64_t time_next_decrement;
-        uint16_t value;
-        uint16_t decrement_interval;
+
+        // NOTE(jkk): I learned from reading service manual and tech ref that
+        // the timer input is the synchronized to the CPU clock and the timer
+        // output is determined by the mode.
+
+        // The timer output is connected to the buzzer but gated by some lines
+        // that are controlled by other registers in the 80C55.
+
+        uint64_t time_next_period; // total T states
+        uint16_t interval;
+        uint16_t counter; // Only 14 bits 
         Timer_Mode mode;
     } timer;
 } Pc8201_81C55;
@@ -164,14 +172,13 @@ static void loop_cb(Vm_8085 *vm) {
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
     
     // Calculate time from total_t_states
-
-    while (mach->cpu.total_t_states > mach->ic_81c55.timer.time_next_decrement) {
-        mach->ic_81c55.timer.time_next_decrement += mach->ic_81c55.timer.decrement_interval;
-        if (--mach->ic_81c55.timer.value == 0) {
-            // Cause interrupt
-            ;
-            
-        }
+    static int x = 0;
+    while (mach->cpu.total_t_states > mach->ic_81c55.timer.time_next_period) {
+        uint64_t t = mach->cpu.total_t_states - mach->ic_81c55.timer.time_next_period;
+        mach->ic_81c55.timer.counter = t % mach->ic_81c55.timer.interval;
+        mach->ic_81c55.timer.time_next_period += mach->ic_81c55.timer.interval;
+        // Cause interrupt
+        fprintf(stdout, "HEJSA!!!! %d\n", x++);
     }
 }
 
@@ -341,7 +348,7 @@ DECL_EXPORT void reset_emulator_with_co_file(uint8_t *co_file, int32_t co_file_l
     machine.cpu.loop_cb = loop_cb;
     machine.cpu.user_data = (void *)&machine;
 
-    machine.ic_81c55.timer.decrement_interval = 16384;
+    machine.ic_81c55.timer.interval = 16384;
 }
 
 #ifdef TARGET_WEB
