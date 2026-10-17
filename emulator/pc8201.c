@@ -82,7 +82,7 @@ typedef struct {
 
         uint64_t time_next_period; // total T states
         uint16_t interval;
-        uint16_t counter; // Only 14 bits 
+        uint16_t counter; // Only 14 bits
         Timer_Mode mode;
     } timer;
 } Pc8201_81C55;
@@ -113,6 +113,8 @@ typedef struct {
     Pc8201Keyboard key;
 
     Pc8201_81C55 ic_81c55;
+
+    bool buzzer_on;
 
     // Debugger support
     BreakPointKind breakpoints[65536];
@@ -170,7 +172,7 @@ static void mem_cb(Vm_8085 *vm, uint16_t addr, bool is_write, uint8_t *in_out_da
 
 static void loop_cb(Vm_8085 *vm) {
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
-    
+
     // Calculate time from total_t_states
     static int x = 0;
     while (mach->cpu.total_t_states > mach->ic_81c55.timer.time_next_period) {
@@ -220,6 +222,9 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
         lcd->driver_select &= 0x00ff;
         lcd->driver_select |= (*in_out_data & 0x3) << 8;
+
+        mach->buzzer_on = !!(*in_out_data & (1 << 5));
+
         return true;
     }
 
@@ -739,6 +744,42 @@ GLuint compile_shader(GLenum type, const char* src) {
     return shader;
 }
 
+#define SAMPLE_RATE 22050
+
+void update_audio(SDL_AudioStream *audio_stream) {
+    static int current_sine_sample = 0;
+
+    const int minimum_audio = 128;
+    if (SDL_GetAudioStreamQueued(audio_stream) < minimum_audio) {
+        static float samples[512];  /* this will feed 512 samples each frame until we get to our maximum. */
+        enum { PREV_SAMPLE_COUNT = 32 };
+        static float prev_samples[PREV_SAMPLE_COUNT];
+        float mute_factor = machine.buzzer_on ? 1.0f : 0.0f;
+
+        /* generate a 440Hz pure tone */
+        for (uint32_t i = 0; i < SDL_arraysize(samples); i++) {
+            const int freq = 440;
+            const float phase = current_sine_sample * freq / (float)SAMPLE_RATE;
+            samples[i] = mute_factor * (SDL_fmodf(phase, 1.0f) > 0.5f ? 1.0f : -1.0f);
+            samples[i] /= (float)(PREV_SAMPLE_COUNT + 1);
+
+            for (uint32_t s = 0; s < SDL_arraysize(prev_samples); ++s)
+                samples[i] += prev_samples[s] / (float) (PREV_SAMPLE_COUNT + 1);
+
+            for (uint32_t s = SDL_arraysize(prev_samples) - 1; s > 0; --s)
+                prev_samples[s] = prev_samples[s-1];
+
+            current_sine_sample++;
+        }
+
+        /* wrapping around to avoid floating-point errors */
+        current_sine_sample %= SAMPLE_RATE;
+
+        /* feed the new data to the stream. It will queue at the end, and trickle out as the hardware needs more data. */
+        SDL_PutAudioStreamData(audio_stream, samples, sizeof (samples));
+    }
+}
+
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -784,9 +825,24 @@ int main(int argc, char* argv[]) {
     free(co_file_data); // Memory was copied into machine.memory
 
     // --- 3. SDL3 & OpenGL Initialization ---
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
-        SDL_Log("SDL_Init failed: %s", SDL_GetError());
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
+        SDL_Log("Couldn't initialize SDL: %s", SDL_GetError());
         return 1;
+    }
+
+    // Initialize audio
+    SDL_AudioStream *audio_stream = NULL;
+    {
+        SDL_AudioSpec spec = {0};
+        spec.channels = 1;
+        spec.format = SDL_AUDIO_F32;
+        spec.freq = SAMPLE_RATE;
+        audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
+        if (!audio_stream) {
+            SDL_Log("Couldn't create audio stream: %s", SDL_GetError());
+            return 1;
+        }
+        SDL_ResumeAudioStreamDevice(audio_stream);
     }
 
     // Request OpenGL ES 3.0 context (matches #version 300 es)
@@ -906,6 +962,9 @@ int main(int argc, char* argv[]) {
             int32_t res = run(t_state_goal);
             t_states_excess = (res < 0) ? 0 : res;
         }
+
+        // Audio
+        update_audio(audio_stream);
 
         // --- Viewport & Uniform Updates ---
         int window_w, window_h;
