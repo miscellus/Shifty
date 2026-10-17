@@ -174,13 +174,11 @@ static void loop_cb(Vm_8085 *vm) {
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
 
     // Calculate time from total_t_states
-    static int x = 0;
     while (mach->cpu.total_t_states > mach->ic_81c55.timer.time_next_period) {
         uint64_t t = mach->cpu.total_t_states - mach->ic_81c55.timer.time_next_period;
         mach->ic_81c55.timer.counter = t % mach->ic_81c55.timer.interval;
         mach->ic_81c55.timer.time_next_period += mach->ic_81c55.timer.interval;
-        // Cause interrupt
-        fprintf(stdout, "HEJSA!!!! %d\n", x++);
+        // TODO(jkk): Cause interrupt
     }
 }
 
@@ -200,32 +198,49 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
         Port81C55Cmd = 0xB8,
         Port81C55A = 0xB9,
         Port81C55B = 0xBA,
+        PortTimerLow = 0xBC,
+        PortTimerHigh = 0xBD,
         PortKeyIn = 0xE8,
     };
 
     bool is_read = !is_write;
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
     Pc8201Lcd *lcd = &mach->lcd;
+    uint8_t data = is_write ? *in_out_data : 0;
 
     if (is_write && port == Port81C55A)
     {
-        mach->key.strobe_a = *in_out_data; // Track keyboard strobe
+        mach->key.strobe_a = data; // Track keyboard strobe
 
         lcd->driver_select &= 0xff00;
-        lcd->driver_select |= *in_out_data;
+        lcd->driver_select |= data;
         return true;
     }
 
     if (is_write && port == Port81C55B)
     {
-        mach->key.strobe_b = *in_out_data; // Track keyboard strobe (PB0)
+        mach->key.strobe_b = data; // Track keyboard strobe (PB0)
 
         lcd->driver_select &= 0x00ff;
-        lcd->driver_select |= (*in_out_data & 0x3) << 8;
+        lcd->driver_select |= (data & 0x3) << 8;
 
-        mach->buzzer_on = !!(*in_out_data & (1 << 5));
+        mach->buzzer_on = !!(data & (1 << 5));
 
         return true;
+    }
+
+    if (is_write && port == PortTimerLow)
+    {
+        mach->ic_81c55.timer.interval &= 0xff00;
+        mach->ic_81c55.timer.interval |= data;
+    }
+
+    if (is_write && port == PortTimerHigh)
+    {
+        mach->ic_81c55.timer.interval &= 0xC0ff;
+        mach->ic_81c55.timer.interval |= (((uint16_t)(data & 0x3f)) << 8);
+
+        mach->ic_81c55.timer.mode = (data >> 6) & 3;
     }
 
     if (is_read && port == Port81C55B)
