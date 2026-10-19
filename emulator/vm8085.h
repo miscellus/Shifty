@@ -300,8 +300,10 @@ static inline uint16_t stack_pop_ret_addr(Vm_8085 *vm)
 {
     uint16_t val = stack_pop(vm);
     if (vm->call_depth > 0) {
-        uint16_t val2 = vm->call_stack[--vm->call_depth];
-        assert(val == val2);
+        uint16_t expected_val = vm->call_stack[--vm->call_depth];
+        if (val != expected_val) {
+            vm->call_depth = 0;
+        }
     }
     return val;
 }

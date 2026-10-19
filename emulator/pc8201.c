@@ -25,6 +25,42 @@
 #define DECL_EXPORT
 #endif
 
+
+#define PC8201_PORTS(X) \
+    X(PortA8255,      0x70) \
+    X(PortB8255,      0x71) \
+    X(PortC8255,      0x72) \
+    X(PortCW8255,     0x73) \
+    X(PortRomAh,      0x80) \
+    X(PortRomAl,      0x84) \
+    X(PortRomAm,      0x88) \
+    X(PortRomRd,      0x8C) \
+    X(PortIoCnt,      0x90) \
+    X(PortIoSts,      0xA0) \
+    X(PortPrtStb,     0xA1) \
+    X(Port81C55Cmd,   0xB8) \
+    X(Port81C55A,     0xB9) \
+    X(Port81C55B,     0xBA) \
+    X(Port81C55C,     0xBB) \
+    X(PortTimerLow,   0xBC) \
+    X(PortTimerHigh,  0xBD) \
+    X(PortTxRxD,      0xC8) \
+    X(PortCs6402,     0xD8) \
+    X(PortKeyIn,      0xE8) \
+    X(PortLcdCmd,     0xFE) \
+    X(PortLcdData,    0xFF) \
+    /*end*/
+
+typedef enum {
+#define X(name, val) name = val,
+    PC8201_PORTS(X)
+#undef X
+    // Aliases for duplicate hex values
+    PortBnkStt  = 0xA0,
+    PortBnkSel  = 0xA1,
+    PortLcdStat = 0xFE
+} Pc8201Port;
+
 typedef struct {
     uint8_t bytes[50][4];
     uint8_t page; // 0-3
@@ -85,6 +121,8 @@ typedef struct {
         uint16_t counter; // Only 14 bits
         Timer_Mode mode;
     } timer;
+
+    uint8_t latched_port_a;
 } Pc8201_81C55;
 
 typedef uint8_t BreakPointKind;
@@ -158,6 +196,15 @@ void update_canvas_buffer(Pc8201Machine* mach) {
     }
 }
 
+static const char* string_from_port(uint8_t port) {
+    switch (port) {
+#define X(name, val) case val: return #name;
+        PC8201_PORTS(X)
+#undef X
+        default: return "UnknownPort";
+    }
+}
+
 static void mem_cb(Vm_8085 *vm, uint16_t addr, bool is_write, uint8_t *in_out_data)
 {
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
@@ -178,11 +225,13 @@ static void loop_cb(Vm_8085 *vm) {
         uint64_t t = mach->cpu.total_t_states - mach->ic_81c55.timer.time_next_period;
         mach->ic_81c55.timer.counter = t % mach->ic_81c55.timer.interval;
         mach->ic_81c55.timer.time_next_period += mach->ic_81c55.timer.interval;
-        // TODO(jkk): Cause interrupt
+
+        // Trigger RST 7.5 interrupt edge latch
+        vm->rst75_latch = true;
     }
 }
 
-#ifdef TARGET_DEBUG
+#ifndef TARGET_WEB
 #include <stdio.h>
 #else
 #define fprintf(...) ((void)0)
@@ -190,19 +239,6 @@ static void loop_cb(Vm_8085 *vm) {
 
 static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data)
 {
-    enum
-    {
-        PortLcdCmd = 0xfe,
-        PortLcdStat = PortLcdCmd,
-        PortLcdData = 0xff,
-        Port81C55Cmd = 0xB8,
-        Port81C55A = 0xB9,
-        Port81C55B = 0xBA,
-        PortTimerLow = 0xBC,
-        PortTimerHigh = 0xBD,
-        PortKeyIn = 0xE8,
-    };
-
     bool is_read = !is_write;
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
     Pc8201Lcd *lcd = &mach->lcd;
@@ -210,10 +246,17 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
     if (is_write && port == Port81C55A)
     {
-        mach->key.strobe_a = data; // Track keyboard strobe
+        mach->ic_81c55.latched_port_a = data;
+        mach->key.strobe_a = data;
 
         lcd->driver_select &= 0xff00;
         lcd->driver_select |= data;
+        return true;
+    }
+
+    if (is_read && port == Port81C55A)
+    {
+        *in_out_data = mach->ic_81c55.latched_port_a;
         return true;
     }
 
@@ -319,8 +362,29 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
         return true;
     }
 
-    if (is_write) fprintf(stderr, "IO WRITE port %#02X, value = %#02X;\n", port, *in_out_data);
-    else fprintf(stderr, "IO READ port %#02X;\n", port);
+    if (is_read && port == Port81C55C)
+    {
+        // Clear Bit 2 (Printer Busy = 0, meaning ready)
+        // Adjust other bits as needed for CTS/DSR/etc.
+        *in_out_data = 0xF8; 
+        return true;
+    }
+
+#define BINPAT "%c%c%c%c%c%c%c%c"
+#define BYTE_TO_BIN(byte)  \
+  ((byte) & 0x80 ? '1' : '0'), \
+  ((byte) & 0x40 ? '1' : '0'), \
+  ((byte) & 0x20 ? '1' : '0'), \
+  ((byte) & 0x10 ? '1' : '0'), \
+  ((byte) & 0x08 ? '1' : '0'), \
+  ((byte) & 0x04 ? '1' : '0'), \
+  ((byte) & 0x02 ? '1' : '0'), \
+  ((byte) & 0x01 ? '1' : '0') 
+
+    const char *portstr = string_from_port(port);
+    uint64_t t = mach->cpu.total_t_states;
+    if (is_write) fprintf(stderr, "@: %04X T: %08lx - IO WRITE port %02X (%15.20s), value = %02x ("BINPAT");\n", mach->cpu.pc, t, port, portstr, data, BYTE_TO_BIN(data));
+    else fprintf(stderr, "@: %04X T: %08lx - IO READ  port %02X (%15.20s);\n", mach->cpu.pc, t, port, portstr);
 
     return false;
 }
@@ -329,33 +393,8 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 #include <stdlib.h>
 #endif
 
-DECL_EXPORT void reset_emulator_with_co_file(uint8_t *co_file, int32_t co_file_len) {
-    // Clear memory & registers
-
-    if (co_file_len < 6) {
-        die("A valid CO file must be at least as big as the 6 byte header.\n");
-    }
-
-    uint16_t program_base_addr  = co_file[0] | ((uint16_t)co_file[1] << 8);
-    uint16_t program_length     = co_file[2] | ((uint16_t)co_file[3] << 8);
-    uint16_t program_entry_addr = co_file[4] | ((uint16_t)co_file[5] << 8);
-    uint8_t *program            = co_file + 6;
-
-    if (co_file_len != 6 + program_length) {
-        die("CO file length does not match file header.\n");
-    }
-
-    // Load the hardcoded binary directly into the CPU's memory array at address 0x0000
+DECL_EXPORT void reset_emulator(void) {
     memset(&machine, 0, sizeof(machine));
-    memcpy(machine.memory + program_base_addr, program, program_length);
-
-    machine.memory[0] = 0xCD; // CALL
-    machine.memory[1] = program_entry_addr & 0xff;
-    machine.memory[2] = (program_entry_addr >> 8) & 0xff;
-    machine.memory[3] = 0xC3; // JMP
-    machine.memory[4] = 0x0;
-    machine.memory[5] = 0x0;
-    machine.cpu.sp = 0x9DE4; // Taken directly from the debugger in VirtualT.
 
     for (int i = 0; i < 9; i++) {
         machine.key.matrix[i] = 0xFF;
@@ -369,6 +408,40 @@ DECL_EXPORT void reset_emulator_with_co_file(uint8_t *co_file, int32_t co_file_l
     machine.cpu.user_data = (void *)&machine;
 
     machine.ic_81c55.timer.interval = 16384;
+}
+
+DECL_EXPORT void load_co_file(uint8_t *co_file, int32_t co_file_len) {
+    if (co_file_len < 6) {
+        die("A valid CO file must be at least as big as the 6 byte header.\n");
+    }
+
+    uint16_t program_base_addr  = co_file[0] | ((uint16_t)co_file[1] << 8);
+    uint16_t program_length     = co_file[2] | ((uint16_t)co_file[3] << 8);
+    uint16_t program_entry_addr = co_file[4] | ((uint16_t)co_file[5] << 8);
+    uint8_t *program            = co_file + 6;
+
+    if (co_file_len != 6 + program_length) {
+        die("CO file length does not match file header.\n");
+    }
+
+    memcpy(machine.memory + program_base_addr, program, program_length);
+
+    machine.memory[0] = 0xCD; // CALL
+    machine.memory[1] = program_entry_addr & 0xff;
+    machine.memory[2] = (program_entry_addr >> 8) & 0xff;
+    machine.memory[3] = 0xC3; // JMP
+    machine.memory[4] = 0x0;
+    machine.memory[5] = 0x0;
+    machine.cpu.sp = 0x9DE4; // Taken directly from the debugger in VirtualT.
+}
+
+DECL_EXPORT void load_rom(uint8_t *rom_data, int32_t rom_size) {
+    memcpy(machine.memory, rom_data, rom_size);
+}
+
+DECL_EXPORT void reset_emulator_with_co_file(uint8_t *co_file, int32_t co_file_len) {
+    reset_emulator();
+    load_co_file(co_file, co_file_len);
 }
 
 #ifdef TARGET_WEB
@@ -542,72 +615,71 @@ DECL_EXPORT DebuggerLoc *get_source_map_ptr(void) {
 #include <stdbool.h>
 
 
-// Helper to translate SDL keys to the PC-8201 9x8 keyboard matrix
 static void handle_sdl_key(SDL_Keycode key, bool is_pressed) {
     int row = -1, col = -1;
 
     switch (key) {
-        // Row 0
-        case SDLK_Z:          row = 0; col = 0; break;
-        case SDLK_X:          row = 0; col = 1; break;
-        case SDLK_C:          row = 0; col = 2; break;
-        case SDLK_V:          row = 0; col = 3; break;
-        case SDLK_B:          row = 0; col = 4; break;
-        case SDLK_N:          row = 0; col = 5; break;
-        case SDLK_M:          row = 0; col = 6; break;
-        case SDLK_COMMA:      row = 0; col = 7; break;
+        // Row 0 (Strobe 0: Z, X, C, V, B, N, M, L)
+        case SDLK_Z:      row = 0; col = 0; break;
+        case SDLK_X:      row = 0; col = 1; break;
+        case SDLK_C:      row = 0; col = 2; break;
+        case SDLK_V:      row = 0; col = 3; break;
+        case SDLK_B:      row = 0; col = 4; break;
+        case SDLK_N:      row = 0; col = 5; break;
+        case SDLK_M:      row = 0; col = 6; break;
+        case SDLK_L:      row = 0; col = 7; break;
 
-        // Row 1
-        case SDLK_A:          row = 1; col = 0; break;
-        case SDLK_S:          row = 1; col = 1; break;
-        case SDLK_D:          row = 1; col = 2; break;
-        case SDLK_F:          row = 1; col = 3; break;
-        case SDLK_G:          row = 1; col = 4; break;
-        case SDLK_H:          row = 1; col = 5; break;
-        case SDLK_J:          row = 1; col = 6; break;
-        case SDLK_K:          row = 1; col = 7; break;
+        // Row 1 (Strobe 1: A, S, D, F, G, H, J, K)
+        case SDLK_A:      row = 1; col = 0; break;
+        case SDLK_S:      row = 1; col = 1; break;
+        case SDLK_D:      row = 1; col = 2; break;
+        case SDLK_F:      row = 1; col = 3; break;
+        case SDLK_G:      row = 1; col = 4; break;
+        case SDLK_H:      row = 1; col = 5; break;
+        case SDLK_J:      row = 1; col = 6; break;
+        case SDLK_K:      row = 1; col = 7; break;
 
-        // Row 2
-        case SDLK_Q:          row = 2; col = 0; break;
-        case SDLK_W:          row = 2; col = 1; break;
-        case SDLK_E:          row = 2; col = 2; break;
-        case SDLK_R:          row = 2; col = 3; break;
-        case SDLK_T:          row = 2; col = 4; break;
-        case SDLK_Y:          row = 2; col = 5; break;
-        case SDLK_U:          row = 2; col = 6; break;
-        case SDLK_I:          row = 2; col = 7; break;
+        // Row 2 (Strobe 2: Q, W, E, R, T, Y, U, I)
+        case SDLK_Q:      row = 2; col = 0; break;
+        case SDLK_W:      row = 2; col = 1; break;
+        case SDLK_E:      row = 2; col = 2; break;
+        case SDLK_R:      row = 2; col = 3; break;
+        case SDLK_T:      row = 2; col = 4; break;
+        case SDLK_Y:      row = 2; col = 5; break;
+        case SDLK_U:      row = 2; col = 6; break;
+        case SDLK_I:      row = 2; col = 7; break;
 
-        // Row 3
+        // Row 3 (Strobe 3: O, P, @, \, ,, ., /, ])
         case SDLK_O:          row = 3; col = 0; break;
         case SDLK_P:          row = 3; col = 1; break;
-        case SDLK_APOSTROPHE: row = 3; col = 2; break;
-        case SDLK_LEFTBRACKET:row = 3; col = 3; break;
-        case SDLK_BACKSLASH:  row = 3; col = 4; break;
-        case SDLK_RIGHTBRACKET:row = 3; col = 5; break;
-        case SDLK_GRAVE:      row = 3; col = 6; break;
-        case SDLK_SLASH:      row = 3; col = 7; break;
+        case SDLK_AT:         row = 3; col = 2; break;
+        case SDLK_BACKSLASH:  row = 3; col = 3; break;
+        case SDLK_COMMA:      row = 3; col = 4; break;
+        case SDLK_PERIOD:     row = 3; col = 5; break;
+        case SDLK_SLASH:      row = 3; col = 6; break;
+        case SDLK_RIGHTBRACKET:row = 3; col = 7; break;
 
-        // Row 4
-        case SDLK_1:          row = 4; col = 0; break;
-        case SDLK_2:          row = 4; col = 1; break;
-        case SDLK_3:          row = 4; col = 2; break;
-        case SDLK_4:          row = 4; col = 3; break;
-        case SDLK_5:          row = 4; col = 4; break;
-        case SDLK_6:          row = 4; col = 5; break;
-        case SDLK_7:          row = 4; col = 6; break;
-        case SDLK_8:          row = 4; col = 7; break;
+        // Row 4 (Strobe 4: 1, 2, 3, 4, 5, 6, 7, 8)
+        case SDLK_1:      row = 4; col = 0; break;
+        case SDLK_2:      row = 4; col = 1; break;
+        case SDLK_3:      row = 4; col = 2; break;
+        case SDLK_4:      row = 4; col = 3; break;
+        case SDLK_5:      row = 4; col = 4; break;
+        case SDLK_6:      row = 4; col = 5; break;
+        case SDLK_7:      row = 4; col = 6; break;
+        case SDLK_8:      row = 4; col = 7; break;
 
-        // Row 5
+        // Row 5 (Strobe 5: 9, 0, ;, :, -, [, Space, Ins)
         case SDLK_9:          row = 5; col = 0; break;
         case SDLK_0:          row = 5; col = 1; break;
         case SDLK_SEMICOLON:  row = 5; col = 2; break;
-        case SDLK_MINUS:      row = 5; col = 3; break;
-        case SDLK_EQUALS:     row = 5; col = 4; break;
-        case SDLK_SPACE:      row = 5; col = 5; break;
-        case SDLK_INSERT:     row = 5; col = 6; break;
-        case SDLK_PERIOD:     row = 5; col = 7; break;
+        case SDLK_COLON:      row = 5; col = 3; break; // or equivalent shift combination
+        case SDLK_MINUS:      row = 5; col = 4; break;
+        case SDLK_LEFTBRACKET:row = 5; col = 5; break;
+        case SDLK_SPACE:      row = 5; col = 6; break;
+        case SDLK_INSERT:     row = 5; col = 7; break;
 
-        // Row 6
+        // Row 6 (Strobe 6: Nav / Edit keys)
         case SDLK_BACKSPACE:  row = 6; col = 0; break;
         case SDLK_UP:         row = 6; col = 1; break;
         case SDLK_DOWN:       row = 6; col = 2; break;
@@ -617,22 +689,21 @@ static void handle_sdl_key(SDL_Keycode key, bool is_pressed) {
         case SDLK_ESCAPE:     row = 6; col = 6; break;
         case SDLK_RETURN:     row = 6; col = 7; break;
 
-        // Row 7
+        // Row 7 (Strobe 7: Function keys)
         case SDLK_F1:         row = 7; col = 0; break;
         case SDLK_F2:         row = 7; col = 1; break;
         case SDLK_F3:         row = 7; col = 2; break;
         case SDLK_F4:         row = 7; col = 3; break;
         case SDLK_F5:         row = 7; col = 4; break;
-        case SDLK_PAUSE:      row = 7; col = 7; break;
 
-        // Row 8 (Modifiers)
+        // Row 8 (Port B Strobe PB0 / Modifiers)
         case SDLK_LSHIFT:
         case SDLK_RSHIFT:     row = 8; col = 0; break;
         case SDLK_LCTRL:
         case SDLK_RCTRL:      row = 8; col = 1; break;
         case SDLK_LALT:
         case SDLK_RALT:       row = 8; col = 2; break;
-        case SDLK_CAPSLOCK:   row = 8; col = 4; break;
+        case SDLK_CAPSLOCK:   row = 8; col = 3; break;
 
         default: break;
     }
@@ -668,6 +739,7 @@ const char* fragment_shader_src =
     "const vec2 SHADOW_OFFSET = vec2(0.20, 0.25);\n"
     "const float CONTRAST = 1.00;\n"
     "const float BRIGHTNESS = 0.0;\n"
+    "const float BORDER_WIDTH = 2.0;\n"
     "float getPixelMask(vec2 gridFract, vec2 aaWidth) {\n"
     "    vec2 bl = smoothstep(vec2(PIXEL_GAP) - aaWidth, vec2(PIXEL_GAP) + aaWidth, gridFract);\n"
     "    vec2 tr = smoothstep(vec2(PIXEL_GAP) - aaWidth, vec2(PIXEL_GAP) + aaWidth, 1.0 - gridFract);\n"
@@ -678,24 +750,35 @@ const char* fragment_shader_src =
     "}\n"
     "void main() {\n"
     "    vec2 pixelCoord = v_texCoord * u_resolution;\n"
-    "    vec2 gridId = floor(pixelCoord);\n"
-    "    vec2 gridFract = fract(pixelCoord);\n"
-    "    vec2 texUV = (gridId + 0.5) / u_resolution;\n"
-    "    vec4 texColor = texture(u_image, texUV);\n"
-    "    float pixelActive = step(texColor.r, 0.52);\n"
-    "    vec2 shadowCoord = pixelCoord - SHADOW_OFFSET;\n"
-    "    vec2 shadowGridId = floor(shadowCoord);\n"
-    "    vec2 shadowUV = (shadowGridId + 0.5) / u_resolution;\n"
-    "    vec4 shadowTexColor = texture(u_image, shadowUV);\n"
-    "    float shadowActive = step(shadowTexColor.r, 0.52);\n"
-    "    float pixelMask = getPixelMask(gridFract, u_aaWidth);\n"
-    "    float shadowMask = getPixelMask(fract(shadowCoord), u_aaWidth);\n"
     "    float lightFactor = dot(v_texCoord, vec2(0.7, -0.7)) * 0.1 + 0.95;\n"
     "    vec3 baseColor = u_colorBg * lightFactor;\n"
     "    baseColor += (hash(gl_FragCoord.xy) * 0.08);\n"
     "    vec3 finalColor = baseColor;\n"
-    "    finalColor = mix(finalColor, u_colorShadow, shadowMask * shadowActive);\n"
-    "    finalColor = mix(finalColor, u_colorPixel, pixelMask * pixelActive);\n"
+    "    \n"
+    "    if (pixelCoord.x >= BORDER_WIDTH && pixelCoord.x < (u_resolution.x - BORDER_WIDTH) &&\n"
+    "        pixelCoord.y >= BORDER_WIDTH && pixelCoord.y < (u_resolution.y - BORDER_WIDTH)) {\n"
+    "        vec2 innerCoord = pixelCoord - vec2(BORDER_WIDTH);\n"
+    "        vec2 innerResolution = u_resolution - vec2(2.0 * BORDER_WIDTH);\n"
+    "        \n"
+    "        vec2 gridId = floor(innerCoord);\n"
+    "        vec2 gridFract = fract(innerCoord);\n"
+    "        vec2 texUV = (gridId + 0.5) / innerResolution;\n"
+    "        vec4 texColor = texture(u_image, texUV);\n"
+    "        float pixelActive = step(texColor.r, 0.52);\n"
+    "        \n"
+    "        vec2 shadowCoord = innerCoord - SHADOW_OFFSET;\n"
+    "        vec2 shadowGridId = floor(shadowCoord);\n"
+    "        vec2 shadowUV = (shadowGridId + 0.5) / innerResolution;\n"
+    "        vec4 shadowTexColor = texture(u_image, shadowUV);\n"
+    "        float shadowActive = step(shadowTexColor.r, 0.52);\n"
+    "        \n"
+    "        float pixelMask = getPixelMask(gridFract, u_aaWidth);\n"
+    "        float shadowMask = getPixelMask(fract(shadowCoord), u_aaWidth);\n"
+    "        \n"
+    "        finalColor = mix(finalColor, u_colorShadow, shadowMask * shadowActive);\n"
+    "        finalColor = mix(finalColor, u_colorPixel, pixelMask * pixelActive);\n"
+    "    }\n"
+    "    \n"
     "    finalColor *= vec3(1.0, 0.99, 0.96);\n"
     "    finalColor = (finalColor - 0.5) * CONTRAST + 0.5 + BRIGHTNESS;\n"
     "    finalColor = clamp(finalColor, 0.0, 1.0);\n"
@@ -795,49 +878,112 @@ void update_audio(SDL_AudioStream *audio_stream) {
     }
 }
 
-
-int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        SDL_Log("Usage: %s <path_to_co_file>", argv[0]);
-        return 1;
+uint8_t *read_entire_file(const char *path, size_t *out_size) {
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) {
+        return NULL;
     }
 
-    // --- 1. Load .CO File ---
-    FILE *co_file = fopen(argv[1], "rb");
-    if (co_file == NULL) {
-        SDL_Log("Could not open CO file '%s'", argv[1]);
-        return 1;
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (file_size < 0) {
+        fclose(f);
+        return NULL;
     }
 
-    fseek(co_file, 0, SEEK_END);
-    long file_size = ftell(co_file);
-    fseek(co_file, 0, SEEK_SET);
-
-    if (file_size <= 6) {
-        SDL_Log("Invalid CO file size: %ld bytes", file_size);
-        fclose(co_file);
-        return 1;
+    uint8_t *data = (uint8_t *)allocate((size_t)file_size);
+    if (data == NULL) {
+        fclose(f);
+        return NULL;
     }
 
-    uint8_t *co_file_data = (uint8_t *)allocate((size_t)file_size);
-    if (!co_file_data) {
-        SDL_Log("Failed to allocate memory for CO file");
-        fclose(co_file);
-        return 1;
-    }
-
-    size_t bytes_read = fread(co_file_data, 1, (size_t)file_size, co_file);
-    fclose(co_file);
+    size_t bytes_read = fread(data, 1, (size_t)file_size, f);
+    fclose(f);
 
     if (bytes_read != (size_t)file_size) {
-        SDL_Log("Failed to read complete file data");
-        free(co_file_data);
-        return 1;
+        free(data);
+        return NULL;
     }
 
-    // --- 2. Initialize Emulator State ---
-    reset_emulator_with_co_file(co_file_data, (int32_t)file_size);
-    free(co_file_data); // Memory was copied into machine.memory
+    if (out_size) {
+        *out_size = (size_t)file_size;
+    }
+
+    return data;
+}
+
+#define arg_shift(argc, argv) ((argc) > 0 ? (--(argc), *(argv)++) : NULL)
+
+int main(int argc, char* argv[]) {
+
+    const char *program = arg_shift(argc, argv);
+    (void)program;
+
+    const char *co_file_path = NULL;
+    const char *rom_file_path = NULL;
+
+    while (argc > 0) {
+        const char *arg = arg_shift(argc, argv);
+
+        if (strncmp(arg, "--", 2) != 0) {
+            continue;
+        }
+
+        arg += 2;
+        
+        if (strcmp(arg, "rom") == 0) {
+            if (!(rom_file_path = arg_shift(argc, argv))) {
+                SDL_Log("Missing argument <ROM File path>.\n");
+                return 1;
+            }
+        }
+        else if (strcmp(arg, "co-file") == 0) {
+            if (!(co_file_path = arg_shift(argc, argv))) {
+                SDL_Log("TODO(jkk): Missing argument <CO File path>.\n");
+                return 1;
+            }
+        }
+        else {
+            SDL_Log("Unknown argument: %s\n", arg);
+        }
+    }
+
+    reset_emulator();
+
+
+    if (rom_file_path) {
+        size_t rom_size = 0;
+        uint8_t *rom_data = read_entire_file(rom_file_path, &rom_size);
+        
+        if (!rom_data) {
+            SDL_Log("Could not open or read ROM file '%s'\n", rom_file_path);
+            return 1;
+        }
+
+        load_rom(rom_data, rom_size);
+        free(rom_data);
+    }
+
+    if (co_file_path) {
+        size_t file_size = 0;
+        uint8_t *co_file_data = read_entire_file(co_file_path, &file_size);
+        
+        if (!co_file_data) {
+            SDL_Log("Could not open or read CO file '%s'\n", co_file_path);
+            return 1;
+        }
+
+        if (file_size <= 6) {
+            SDL_Log("Invalid CO file size: %zu bytes\n", file_size);
+            free(co_file_data);
+            return 1;
+        }
+
+        load_co_file(co_file_data, (int32_t)file_size);
+        free(co_file_data);
+    }
 
     // --- 3. SDL3 & OpenGL Initialization ---
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
@@ -936,7 +1082,7 @@ int main(int argc, char* argv[]) {
 
     // Set Static Uniforms
     gl.Uniform1i(gl.GetUniformLocation(shaderProgram, "u_image"), 0);
-    gl.Uniform2f(gl.GetUniformLocation(shaderProgram, "u_resolution"), (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT);
+    gl.Uniform2f(gl.GetUniformLocation(shaderProgram, "u_resolution"), (float)SCREEN_WIDTH + 4, (float)SCREEN_HEIGHT + 4);
 
     // Define standard LCD greenish/gray colors for the shader
     gl.Uniform3f(gl.GetUniformLocation(shaderProgram, "u_colorBg"),     168.f/255.f, 172.0f/255.f, 164.f/255.f);
