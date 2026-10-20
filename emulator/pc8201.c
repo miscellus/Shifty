@@ -337,7 +337,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
         return true;
     }
 
-    if (is_write && port == PortLcdData)
+    if (port == PortLcdData)
     {
         for (int i = 0; i < 10; ++i) {
             if (!(lcd->driver_select & (1 << i))) continue;
@@ -346,13 +346,20 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
             // Enforce bounds checking before writing
             if (driv->offset < 50 && driv->page < 4) {
-                driv->bytes[driv->offset][driv->page] = *in_out_data;
+                uint8_t *loc = &driv->bytes[driv->offset][driv->page];
+                if (is_write) *loc = *in_out_data;
+                else *in_out_data = *loc;
             }
 
             // Mimic "module 50" loop counter behavior
             driv->offset += driv->is_counter_mode_down ? -1 : 1;
             if (driv->offset >= 50) driv->offset = driv->is_counter_mode_down ? 49 : 0;
         }
+        return true;
+    }
+
+    if (is_read && port == PortLcdData) {
+        *in_out_data = 0xcd;
         return true;
     }
 
@@ -615,101 +622,117 @@ DECL_EXPORT DebuggerLoc *get_source_map_ptr(void) {
 #include <stdbool.h>
 
 
-static void handle_sdl_key(SDL_Keycode key, bool is_pressed) {
-    int row = -1, col = -1;
 
-    switch (key) {
-        // Row 0 (Strobe 0: Z, X, C, V, B, N, M, L)
-        case SDLK_Z:      row = 0; col = 0; break;
-        case SDLK_X:      row = 0; col = 1; break;
-        case SDLK_C:      row = 0; col = 2; break;
-        case SDLK_V:      row = 0; col = 3; break;
-        case SDLK_B:      row = 0; col = 4; break;
-        case SDLK_N:      row = 0; col = 5; break;
-        case SDLK_M:      row = 0; col = 6; break;
-        case SDLK_L:      row = 0; col = 7; break;
+static void handle_sdl_key(const SDL_KeyboardEvent *event) {
+    //      col0 col1 col2 col3 col4 col5 col6 col7
+    //
+    // row0   z    x    c    v    b    n    m    l  
+    // row1   a    s    d    f    g    h    j    k  
+    // row2   q    w    e    r    t    y    u    i  
+    // row3   o    p   (@^) (\|) (,<) (.>) (/?) (]})
+    // row4  (1!) (2") (3#) (4$) (5%) (6&) (7') (8()
+    // row5  (9)) (0-) (;+) (:*) (_=) ([{) <sp> ins 
+    // row6   bs   up   dn   lf   rg  tab  esc  ret 
+    // row7   f1   f2   f3   f4   f5            stop
+    // row8  shft ctrl grph      caps               
 
-        // Row 1 (Strobe 1: A, S, D, F, G, H, J, K)
-        case SDLK_A:      row = 1; col = 0; break;
-        case SDLK_S:      row = 1; col = 1; break;
-        case SDLK_D:      row = 1; col = 2; break;
-        case SDLK_F:      row = 1; col = 3; break;
-        case SDLK_G:      row = 1; col = 4; break;
-        case SDLK_H:      row = 1; col = 5; break;
-        case SDLK_J:      row = 1; col = 6; break;
-        case SDLK_K:      row = 1; col = 7; break;
+    int row = -1;
+    int col = -1;
 
-        // Row 2 (Strobe 2: Q, W, E, R, T, Y, U, I)
-        case SDLK_Q:      row = 2; col = 0; break;
-        case SDLK_W:      row = 2; col = 1; break;
-        case SDLK_E:      row = 2; col = 2; break;
-        case SDLK_R:      row = 2; col = 3; break;
-        case SDLK_T:      row = 2; col = 4; break;
-        case SDLK_Y:      row = 2; col = 5; break;
-        case SDLK_U:      row = 2; col = 6; break;
-        case SDLK_I:      row = 2; col = 7; break;
+    switch (event->scancode) {
+        // Row 0: z, x, c, v, b, n, m, l
+        case SDL_SCANCODE_Z: row = 0; col = 0; break;
+        case SDL_SCANCODE_X: row = 0; col = 1; break;
+        case SDL_SCANCODE_C: row = 0; col = 2; break;
+        case SDL_SCANCODE_V: row = 0; col = 3; break;
+        case SDL_SCANCODE_B: row = 0; col = 4; break;
+        case SDL_SCANCODE_N: row = 0; col = 5; break;
+        case SDL_SCANCODE_M: row = 0; col = 6; break;
+        case SDL_SCANCODE_L: row = 0; col = 7; break;
 
-        // Row 3 (Strobe 3: O, P, @, \, ,, ., /, ])
-        case SDLK_O:          row = 3; col = 0; break;
-        case SDLK_P:          row = 3; col = 1; break;
-        case SDLK_AT:         row = 3; col = 2; break;
-        case SDLK_BACKSLASH:  row = 3; col = 3; break;
-        case SDLK_COMMA:      row = 3; col = 4; break;
-        case SDLK_PERIOD:     row = 3; col = 5; break;
-        case SDLK_SLASH:      row = 3; col = 6; break;
-        case SDLK_RIGHTBRACKET:row = 3; col = 7; break;
+        // Row 1: a, s, d, f, g, h, j, k
+        case SDL_SCANCODE_A: row = 1; col = 0; break;
+        case SDL_SCANCODE_S: row = 1; col = 1; break;
+        case SDL_SCANCODE_D: row = 1; col = 2; break;
+        case SDL_SCANCODE_F: row = 1; col = 3; break;
+        case SDL_SCANCODE_G: row = 1; col = 4; break;
+        case SDL_SCANCODE_H: row = 1; col = 5; break;
+        case SDL_SCANCODE_J: row = 1; col = 6; break;
+        case SDL_SCANCODE_K: row = 1; col = 7; break;
 
-        // Row 4 (Strobe 4: 1, 2, 3, 4, 5, 6, 7, 8)
-        case SDLK_1:      row = 4; col = 0; break;
-        case SDLK_2:      row = 4; col = 1; break;
-        case SDLK_3:      row = 4; col = 2; break;
-        case SDLK_4:      row = 4; col = 3; break;
-        case SDLK_5:      row = 4; col = 4; break;
-        case SDLK_6:      row = 4; col = 5; break;
-        case SDLK_7:      row = 4; col = 6; break;
-        case SDLK_8:      row = 4; col = 7; break;
+        // Row 2: q, w, e, r, t, y, u, i
+        case SDL_SCANCODE_Q: row = 2; col = 0; break;
+        case SDL_SCANCODE_W: row = 2; col = 1; break;
+        case SDL_SCANCODE_E: row = 2; col = 2; break;
+        case SDL_SCANCODE_R: row = 2; col = 3; break;
+        case SDL_SCANCODE_T: row = 2; col = 4; break;
+        case SDL_SCANCODE_Y: row = 2; col = 5; break;
+        case SDL_SCANCODE_U: row = 2; col = 6; break;
+        case SDL_SCANCODE_I: row = 2; col = 7; break;
 
-        // Row 5 (Strobe 5: 9, 0, ;, :, -, [, Space, Ins)
-        case SDLK_9:          row = 5; col = 0; break;
-        case SDLK_0:          row = 5; col = 1; break;
-        case SDLK_SEMICOLON:  row = 5; col = 2; break;
-        case SDLK_COLON:      row = 5; col = 3; break; // or equivalent shift combination
-        case SDLK_MINUS:      row = 5; col = 4; break;
-        case SDLK_LEFTBRACKET:row = 5; col = 5; break;
-        case SDLK_SPACE:      row = 5; col = 6; break;
-        case SDLK_INSERT:     row = 5; col = 7; break;
+        // Row 3: o, p, (@^), (\|), (,<), (.>), (/^), (]})
+        case SDL_SCANCODE_O:            row = 3; col = 0; break;
+        case SDL_SCANCODE_P:            row = 3; col = 1; break;
+        case SDL_SCANCODE_GRAVE:        row = 3; col = 2; break;
+        case SDL_SCANCODE_BACKSLASH:    row = 3; col = 3; break;
+        case SDL_SCANCODE_COMMA:        row = 3; col = 4; break;
+        case SDL_SCANCODE_PERIOD:       row = 3; col = 5; break;
+        case SDL_SCANCODE_SLASH:        row = 3; col = 6; break;
+        case SDL_SCANCODE_RIGHTBRACKET: row = 3; col = 7; break;
 
-        // Row 6 (Strobe 6: Nav / Edit keys)
-        case SDLK_BACKSPACE:  row = 6; col = 0; break;
-        case SDLK_UP:         row = 6; col = 1; break;
-        case SDLK_DOWN:       row = 6; col = 2; break;
-        case SDLK_LEFT:       row = 6; col = 3; break;
-        case SDLK_RIGHT:      row = 6; col = 4; break;
-        case SDLK_TAB:        row = 6; col = 5; break;
-        case SDLK_ESCAPE:     row = 6; col = 6; break;
-        case SDLK_RETURN:     row = 6; col = 7; break;
+        // Row 4: (1!), (2"), (3#), (4$), (5%), (6&), (7'), (8()
+        case SDL_SCANCODE_1: row = 4; col = 0; break;
+        case SDL_SCANCODE_2: row = 4; col = 1; break;
+        case SDL_SCANCODE_3: row = 4; col = 2; break;
+        case SDL_SCANCODE_4: row = 4; col = 3; break;
+        case SDL_SCANCODE_5: row = 4; col = 4; break;
+        case SDL_SCANCODE_6: row = 4; col = 5; break;
+        case SDL_SCANCODE_7: row = 4; col = 6; break;
+        case SDL_SCANCODE_8: row = 4; col = 7; break;
 
-        // Row 7 (Strobe 7: Function keys)
-        case SDLK_F1:         row = 7; col = 0; break;
-        case SDLK_F2:         row = 7; col = 1; break;
-        case SDLK_F3:         row = 7; col = 2; break;
-        case SDLK_F4:         row = 7; col = 3; break;
-        case SDLK_F5:         row = 7; col = 4; break;
+        // Row 5: (9)), (0-), (;+), (:*), (_=), ([{), <sp>, ins
+        case SDL_SCANCODE_9:           row = 5; col = 0; break;
+        case SDL_SCANCODE_0:           row = 5; col = 1; break;
+        case SDL_SCANCODE_SEMICOLON:   row = 5; col = 2; break;
+        case SDL_SCANCODE_APOSTROPHE:  row = 5; col = 3; break;
+        case SDL_SCANCODE_MINUS:       row = 5; col = 4; break;
+        case SDL_SCANCODE_LEFTBRACKET: row = 5; col = 5; break;
+        case SDL_SCANCODE_SPACE:       row = 5; col = 6; break;
+        case SDL_SCANCODE_INSERT:      row = 5; col = 7; break;
 
-        // Row 8 (Port B Strobe PB0 / Modifiers)
-        case SDLK_LSHIFT:
-        case SDLK_RSHIFT:     row = 8; col = 0; break;
-        case SDLK_LCTRL:
-        case SDLK_RCTRL:      row = 8; col = 1; break;
-        case SDLK_LALT:
-        case SDLK_RALT:       row = 8; col = 2; break;
-        case SDLK_CAPSLOCK:   row = 8; col = 3; break;
+        // Row 6: bs, up, dn, lf, rg, tab, esc, ret
+        case SDL_SCANCODE_BACKSPACE: row = 6; col = 0; break;
+        case SDL_SCANCODE_UP:        row = 6; col = 1; break;
+        case SDL_SCANCODE_DOWN:      row = 6; col = 2; break;
+        case SDL_SCANCODE_LEFT:      row = 6; col = 3; break;
+        case SDL_SCANCODE_RIGHT:     row = 6; col = 4; break;
+        case SDL_SCANCODE_TAB:       row = 6; col = 5; break;
+        case SDL_SCANCODE_ESCAPE:    row = 6; col = 6; break;
+        case SDL_SCANCODE_RETURN:    row = 6; col = 7; break;
 
-        default: break;
+        // Row 7: f1, f2, f3, f4, f5, _, _, stop
+        case SDL_SCANCODE_F1:    row = 7; col = 0; break;
+        case SDL_SCANCODE_F2:    row = 7; col = 1; break;
+        case SDL_SCANCODE_F3:    row = 7; col = 2; break;
+        case SDL_SCANCODE_F4:    row = 7; col = 3; break;
+        case SDL_SCANCODE_F5:    row = 7; col = 4; break;
+        case SDL_SCANCODE_F6:    row = 7; col = 7; break; // STOP
+
+        // Row 8: shft, ctrl, grph, _, caps, _, _, _
+        case SDL_SCANCODE_LSHIFT:
+        case SDL_SCANCODE_RSHIFT:    row = 8; col = 0; break;
+        case SDL_SCANCODE_LCTRL:
+        case SDL_SCANCODE_RCTRL:     row = 8; col = 1; break;
+        case SDL_SCANCODE_LALT:
+        case SDL_SCANCODE_RALT:      row = 8; col = 2; break;
+        case SDL_SCANCODE_CAPSLOCK:  row = 8; col = 4; break;
+
+        default:
+            break;
     }
 
     if (row != -1 && col != -1) {
-        set_key_state(row, col, is_pressed);
+        set_key_state(row, col, (event->type == SDL_EVENT_KEY_DOWN));
     }
 }
 
@@ -1101,13 +1124,10 @@ int main(int argc, char* argv[]) {
             if (event.type == SDL_EVENT_QUIT) {
                 running = false;
             }
-            else if (event.type == SDL_EVENT_KEY_DOWN) {
+            else if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
                 if (!event.key.repeat) {
-                    handle_sdl_key(event.key.key, true);
+                    handle_sdl_key(&event.key);
                 }
-            }
-            else if (event.type == SDL_EVENT_KEY_UP) {
-                handle_sdl_key(event.key.key, false);
             }
         }
 
