@@ -66,6 +66,9 @@ typedef struct {
     uint8_t page; // 0-3
     uint8_t offset; // 0-49
     bool is_counter_mode_down;
+
+    uint8_t read_buffer;
+    bool read_buffer_valid;
 } Pc8201LcdDriver;
 
 typedef struct {
@@ -233,167 +236,201 @@ static void loop_cb(Vm_8085 *vm) {
 
 #ifndef TARGET_WEB
 #include <stdio.h>
+#include <inttypes.h>
 #else
 #define fprintf(...) ((void)0)
 #endif
 
+
 static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data)
 {
-    bool is_read = !is_write;
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
     Pc8201Lcd *lcd = &mach->lcd;
     uint8_t data = is_write ? *in_out_data : 0;
 
-    if (is_write && port == Port81C55A)
-    {
-        mach->ic_81c55.latched_port_a = data;
-        mach->key.strobe_a = data;
+    bool handled = false;
 
-        lcd->driver_select &= 0xff00;
-        lcd->driver_select |= data;
-        return true;
-    }
+    switch (port) {
+    case Port81C55A: {
+        if (is_write) {
+            mach->ic_81c55.latched_port_a = data;
+            mach->key.strobe_a = data;
 
-    if (is_read && port == Port81C55A)
-    {
-        *in_out_data = mach->ic_81c55.latched_port_a;
-        return true;
-    }
+            lcd->driver_select &= 0xff00;
+            lcd->driver_select |= data;
+        }
+        else /* read */ {
+            *in_out_data = mach->ic_81c55.latched_port_a;
+        }
 
-    if (is_write && port == Port81C55B)
-    {
-        mach->key.strobe_b = data; // Track keyboard strobe (PB0)
+        handled = true;
+    } break;
+ 
+    case Port81C55B: {
+        if (is_write) {
+            mach->key.strobe_b = data; // Track keyboard strobe (PB0)
 
-        lcd->driver_select &= 0x00ff;
-        lcd->driver_select |= (data & 0x3) << 8;
+            lcd->driver_select &= 0x00ff;
+            lcd->driver_select |= (data & 0x3) << 8;
 
-        mach->buzzer_on = !!(data & (1 << 5));
+            mach->buzzer_on = !!(data & (1 << 5));
+        }
+        else /* read */ {
+            *in_out_data = (lcd->driver_select >> 8) & 0x3;
+        }
 
-        return true;
-    }
+        handled = true;
+    } break;
 
-    if (is_write && port == PortTimerLow)
-    {
-        mach->ic_81c55.timer.interval &= 0xff00;
-        mach->ic_81c55.timer.interval |= data;
-    }
+    case Port81C55C: {
+        if (is_write) {
+            // TODO
+        }
+        else /* read */ {
+            // Clear Bit 2 (Printer Busy = 0, meaning ready)
+            // Adjust other bits as needed for CTS/DSR/etc.
+            *in_out_data = 0xF8;
+            handled = true;
+        }
+    } break;
 
-    if (is_write && port == PortTimerHigh)
-    {
-        mach->ic_81c55.timer.interval &= 0xC0ff;
-        mach->ic_81c55.timer.interval |= (((uint16_t)(data & 0x3f)) << 8);
+    case PortTimerLow: {
+        if (is_write) {
+            mach->ic_81c55.timer.interval &= 0xff00;
+            mach->ic_81c55.timer.interval |= data;
+            handled = true;
+        }
+        else /* read */ {
+            // TODO
+        }
+    } break;
 
-        mach->ic_81c55.timer.mode = (data >> 6) & 3;
-    }
+    case PortTimerHigh: {
+        if (is_write) {
+            mach->ic_81c55.timer.interval &= 0xC0ff;
+            mach->ic_81c55.timer.interval |= (((uint16_t)(data & 0x3f)) << 8);
+            mach->ic_81c55.timer.mode = (data >> 6) & 3;
+            handled = true;
+        }
+        else /* read */ {
+            // TODO
+        }
+    } break;
 
-    if (is_read && port == Port81C55B)
-    {
-        *in_out_data = (lcd->driver_select >> 8) & 0x3;
-        return true;
-    }
+    //case PortLcdStat alias
+    case PortLcdCmd : {
+        if (is_write) {
+            uint8_t cmd = data;
 
-    // Handle Keyboard Data Read (Port 0xE8)
-    if (is_read && port == PortKeyIn)
-    {
-        uint8_t result = 0xFF; // Default to all keys released
+            for (int i = 0; i < 10; ++i) {
+                if (!(lcd->driver_select & (1 << i))) continue;
 
-        // Check Port A strobes (PA0 - PA7)
-        for (int i = 0; i < 8; i++) {
-            if (!(mach->key.strobe_a & (1 << i))) {
-                // Strobe is ACTIVE (0), merge in depressed keys (0) for this row
-                result &= mach->key.matrix[i];
+                Pc8201LcdDriver *driv = &lcd->drivers[i];
+
+                // Handle the Up/Down selection command (0x3A / 0x3B)
+                if ((cmd & 0xFE) == 0x3A) {
+                    driv->is_counter_mode_down = !(cmd & 0x01); // 1 = Up Counter, 0 = Down Counter
+                }
+                else {
+                    driv->page = (cmd >> 6) & 0x3;
+                    driv->offset = cmd & 0x3F;
+                    driv->read_buffer_valid = false;
+                }
             }
         }
-
-        // Check Port B strobe (PB0 is bit 0)
-        if (!(mach->key.strobe_b & 0x01)) {
-            // Strobe is ACTIVE (0), merge in depressed keys for PB0 row
-            result &= mach->key.matrix[8];
+        else /* read */ {
+            *in_out_data = 0x00; // bit 7 is 0 to indicate LCD ready (For now the LCD is always ready)
+            // TODO(jkk): What about the other flags?
         }
+        handled = true;
+    } break;
 
-        *in_out_data = result;
-        return true;
-    }
-
-    if (is_write && port == PortLcdCmd)
-    {
-        uint8_t cmd = *in_out_data;
-
+    case PortLcdData: {
         for (int i = 0; i < 10; ++i) {
-            if (!(lcd->driver_select & (1 << i))) continue;
+            if (!(lcd->driver_select & (1u << i)))
+                continue;
 
             Pc8201LcdDriver *driv = &lcd->drivers[i];
+            bool valid_address = driv->offset < 50 && driv->page < 4;
 
-            // Handle the Up/Down selection command (0x3A / 0x3B)
-            if ((cmd & 0xFE) == 0x3A) {
-                driv->is_counter_mode_down = !(cmd & 0x01); // 1 = Up Counter, 0 = Down Counter
-            }
-            else {
-                driv->page = (cmd >> 6) & 0x3;
-                driv->offset = cmd & 0x3F;
+            if (is_write) {
+                if (valid_address)
+                    driv->bytes[driv->offset][driv->page] = data;
+            } else {
+                *in_out_data = driv->read_buffer_valid
+                    ? driv->read_buffer
+                    : 0x00;  // Dummy read value; software discards this.
+
+                if (valid_address) {
+                    driv->read_buffer =
+                        driv->bytes[driv->offset][driv->page];
+                    driv->read_buffer_valid = true;
+                } else {
+                    driv->read_buffer_valid = false;
+                }
             }
 
+            /* Advance after both reads and writes, including the dummy read. */
+            if (driv->is_counter_mode_down)
+                driv->offset = (driv->offset == 0 || driv->offset >= 50)
+                    ? 49 : driv->offset - 1;
+            else
+                driv->offset = (driv->offset >= 49)
+                    ? 0 : driv->offset + 1;
         }
-        return true;
-    }
 
-    if (port == PortLcdData)
-    {
-        for (int i = 0; i < 10; ++i) {
-            if (!(lcd->driver_select & (1 << i))) continue;
+        handled = true;
+    } break;
 
-            Pc8201LcdDriver* driv = &lcd->drivers[i];
+    // Handle Keyboard Data Read (Port 0xE8)
+    case PortKeyIn: {
+        if (is_write) {
+            // TODO
+        }
+        else /* read */ {
+            uint8_t result = 0xFF; // Default to all keys released
 
-            // Enforce bounds checking before writing
-            if (driv->offset < 50 && driv->page < 4) {
-                uint8_t *loc = &driv->bytes[driv->offset][driv->page];
-                if (is_write) *loc = *in_out_data;
-                else *in_out_data = *loc;
+            // Check Port A strobes (PA0 - PA7)
+            for (int i = 0; i < 8; i++) {
+                if (!(mach->key.strobe_a & (1 << i))) {
+                    // Strobe is ACTIVE (0), merge in depressed keys (0) for this row
+                    result &= mach->key.matrix[i];
+                }
             }
 
-            // Mimic "module 50" loop counter behavior
-            driv->offset += driv->is_counter_mode_down ? -1 : 1;
-            if (driv->offset >= 50) driv->offset = driv->is_counter_mode_down ? 49 : 0;
+            // Check Port B strobe (PB0 is bit 0)
+            if (!(mach->key.strobe_b & 0x01)) {
+                // Strobe is ACTIVE (0), merge in depressed keys for PB0 row
+                result &= mach->key.matrix[8];
+            }
+
+            *in_out_data = result;
+            handled = true;
         }
-        return true;
-    }
+    } break;
 
-    if (is_read && port == PortLcdData) {
-        *in_out_data = 0xcd;
-        return true;
-    }
-
-    if (is_read && port == PortLcdStat)
-    {
-        *in_out_data = 0x00; // bit 7 is 0 to indicate LCD ready (For now the LCD is always ready)
-        return true;
-    }
-
-    if (is_read && port == Port81C55C)
-    {
-        // Clear Bit 2 (Printer Busy = 0, meaning ready)
-        // Adjust other bits as needed for CTS/DSR/etc.
-        *in_out_data = 0xF8; 
-        return true;
+    default: // TODO
     }
 
 #define BINPAT "%c%c%c%c%c%c%c%c"
 #define BYTE_TO_BIN(byte)  \
-  ((byte) & 0x80 ? '1' : '0'), \
-  ((byte) & 0x40 ? '1' : '0'), \
-  ((byte) & 0x20 ? '1' : '0'), \
-  ((byte) & 0x10 ? '1' : '0'), \
-  ((byte) & 0x08 ? '1' : '0'), \
-  ((byte) & 0x04 ? '1' : '0'), \
-  ((byte) & 0x02 ? '1' : '0'), \
-  ((byte) & 0x01 ? '1' : '0') 
+    ((byte) & 0x80 ? '1' : '0'), \
+    ((byte) & 0x40 ? '1' : '0'), \
+    ((byte) & 0x20 ? '1' : '0'), \
+    ((byte) & 0x10 ? '1' : '0'), \
+    ((byte) & 0x08 ? '1' : '0'), \
+    ((byte) & 0x04 ? '1' : '0'), \
+    ((byte) & 0x02 ? '1' : '0'), \
+    ((byte) & 0x01 ? '1' : '0')
 
-    const char *portstr = string_from_port(port);
-    uint64_t t = mach->cpu.total_t_states;
-    if (is_write) fprintf(stderr, "@: %04X T: %08lx - IO WRITE port %02X (%15.20s), value = %02x ("BINPAT");\n", mach->cpu.pc, t, port, portstr, data, BYTE_TO_BIN(data));
-    else fprintf(stderr, "@: %04X T: %08lx - IO READ  port %02X (%15.20s);\n", mach->cpu.pc, t, port, portstr);
+    if (!handled) {
+        const char *portstr = string_from_port(port);
+        uint64_t t = mach->cpu.total_t_states;
+        if (is_write) fprintf(stderr, "@: %04X T: %"PRIu64" - IO WRITE port %02X (%15.20s), value = %02x ("BINPAT");\n", mach->cpu.pc, t, port, portstr, data, BYTE_TO_BIN(data));
+        else fprintf(stderr, "@: %04X T: %"PRIu64" - IO READ  port %02X (%15.20s);\n", mach->cpu.pc, t, port, portstr);
+    }
 
-    return false;
+    return handled;
 }
 
 #ifdef TARGET_DESKTOP
@@ -626,15 +663,15 @@ DECL_EXPORT DebuggerLoc *get_source_map_ptr(void) {
 static void handle_sdl_key(const SDL_KeyboardEvent *event) {
     //      col0 col1 col2 col3 col4 col5 col6 col7
     //
-    // row0   z    x    c    v    b    n    m    l  
-    // row1   a    s    d    f    g    h    j    k  
-    // row2   q    w    e    r    t    y    u    i  
+    // row0   z    x    c    v    b    n    m    l
+    // row1   a    s    d    f    g    h    j    k
+    // row2   q    w    e    r    t    y    u    i
     // row3   o    p   (@^) (\|) (,<) (.>) (/?) (]})
     // row4  (1!) (2") (3#) (4$) (5%) (6&) (7') (8()
-    // row5  (9)) (0-) (;+) (:*) (_=) ([{) <sp> ins 
-    // row6   bs   up   dn   lf   rg  tab  esc  ret 
+    // row5  (9)) (0-) (;+) (:*) (_=) ([{) <sp> ins
+    // row6   bs   up   dn   lf   rg  tab  esc  ret
     // row7   f1   f2   f3   f4   f5            stop
-    // row8  shft ctrl grph      caps               
+    // row8  shft ctrl grph      caps           
 
     int row = -1;
     int col = -1;
@@ -955,7 +992,7 @@ int main(int argc, char* argv[]) {
         }
 
         arg += 2;
-        
+    
         if (strcmp(arg, "rom") == 0) {
             if (!(rom_file_path = arg_shift(argc, argv))) {
                 SDL_Log("Missing argument <ROM File path>.\n");
@@ -975,11 +1012,10 @@ int main(int argc, char* argv[]) {
 
     reset_emulator();
 
-
     if (rom_file_path) {
         size_t rom_size = 0;
         uint8_t *rom_data = read_entire_file(rom_file_path, &rom_size);
-        
+    
         if (!rom_data) {
             SDL_Log("Could not open or read ROM file '%s'\n", rom_file_path);
             return 1;
@@ -992,7 +1028,7 @@ int main(int argc, char* argv[]) {
     if (co_file_path) {
         size_t file_size = 0;
         uint8_t *co_file_data = read_entire_file(co_file_path, &file_size);
-        
+     
         if (!co_file_data) {
             SDL_Log("Could not open or read CO file '%s'\n", co_file_path);
             return 1;
