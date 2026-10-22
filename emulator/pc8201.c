@@ -143,7 +143,6 @@ typedef union {
     uint32_t v;
 } DebuggerLoc;
 
-// --- 3. Outer Machine State Structure ---
 typedef struct {
     Vm_8085 cpu;
     Pc8201Lcd lcd;
@@ -165,7 +164,6 @@ typedef struct {
 // Globally instantiate our machine state
 static Pc8201Machine machine;
 
-// --- 5. System-Specific Peripherals: Translate 8085 RAM into RGBA Canvas Pixels ---
 void update_canvas_buffer(Pc8201Machine* mach) {
     Pc8201Lcd lcd = mach->lcd;
     uint32_t *canvas = mach->canvas;
@@ -775,7 +773,6 @@ static void handle_sdl_key(const SDL_KeyboardEvent *event) {
     }
 }
 
-// --- Shaders ---
 const char* vertex_shader_src =
     "#version 300 es\n"
     "in vec2 a_position;\n"
@@ -847,7 +844,6 @@ const char* fragment_shader_src =
     "    fragColor = vec4(finalColor, 1.0);\n"
     "}\n";
 
-// --- Minimal GL Loader (avoids needing GLEW/GLAD) ---
 #define GL_FUNC_LIST(X) \
     X(PFNGLCREATESHADERPROC,            CreateShader) \
     X(PFNGLSHADERSOURCEPROC,            ShaderSource) \
@@ -1046,7 +1042,6 @@ int main(int argc, char* argv[]) {
         free(co_file_data);
     }
 
-    // --- 3. SDL3 & OpenGL Initialization ---
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
         SDL_Log("Couldn't initialize SDL: %s", SDL_GetError());
         return 1;
@@ -1091,13 +1086,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    SDL_GL_SetSwapInterval(1); // VSync
+    SDL_GL_SetSwapInterval(1);
 
     if (!load_gl_extensions()) {
         return 1;
     }
 
-    // --- Shader & Geometry Setup ---
     GLuint vs = compile_shader(GL_VERTEX_SHADER, vertex_shader_src);
     GLuint fs = compile_shader(GL_FRAGMENT_SHADER, fragment_shader_src);
     GLuint shaderProgram = gl.CreateProgram();
@@ -1106,21 +1100,14 @@ int main(int argc, char* argv[]) {
     gl.LinkProgram(shaderProgram);
     gl.UseProgram(shaderProgram);
 
-    // Full screen quad
-    float vertices[] = {
-        -1.0f, -1.0f,
-         1.0f, -1.0f,
-        -1.0f,  1.0f,
-         1.0f,  1.0f
-    };
-
     GLuint VAO, VBO;
     gl.GenVertexArrays(1, &VAO);
     gl.GenBuffers(1, &VBO);
 
+    float full_screen_quad[] = {-1.0f, -1.0f, 1.0f, -1.0f, -1.0f,  1.0f, 1.0f,  1.0f};
     gl.BindVertexArray(VAO);
     gl.BindBuffer(GL_ARRAY_BUFFER, VBO);
-    gl.BufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    gl.BufferData(GL_ARRAY_BUFFER, sizeof(full_screen_quad), full_screen_quad, GL_STATIC_DRAW);
 
     GLint posAttrib = gl.GetAttribLocation(shaderProgram, "a_position");
     gl.EnableVertexAttribArray(posAttrib);
@@ -1150,7 +1137,6 @@ int main(int argc, char* argv[]) {
     gl.Uniform3f(gl.GetUniformLocation(shaderProgram, "u_colorPixel"),   41.f/255.f,  42.0f/255.f,  40.f/255.f);
     gl.Uniform3f(gl.GetUniformLocation(shaderProgram, "u_colorShadow"), 129.f/255.f, 130.0f/255.f, 124.f/255.f);
 
-    // --- 4. Main Loop ---
     bool running = true;
     SDL_Event event;
 
@@ -1169,7 +1155,6 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // --- Delta Time & Dynamic Cycle Execution ---
         uint64_t current_time = SDL_GetTicksNS();
         double delta_time = (double)(current_time - last_time) / 1e9;
         if (delta_time > 0.1) delta_time = 0.1;
@@ -1185,7 +1170,6 @@ int main(int argc, char* argv[]) {
         // Audio
         update_audio(audio_stream);
 
-        // --- Viewport & Uniform Updates ---
         int window_w, window_h;
         SDL_GetWindowSizeInPixels(window, &window_w, &window_h);
 
@@ -1211,11 +1195,9 @@ int main(int argc, char* argv[]) {
         // Update AA width uniformly based on the single letterbox scale factor
         gl.Uniform2f(gl.GetUniformLocation(shaderProgram, "u_aaWidth"), 1.0f / scale, 1.0f / scale);
 
-        // --- Upload Emulator Display Frame ---
         glBindTexture(GL_TEXTURE_2D, texture);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, get_canvas_buffer());
 
-        // --- Rendering ---
         gl.UseProgram(shaderProgram);
         gl.BindVertexArray(VAO);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
