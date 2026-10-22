@@ -454,7 +454,7 @@ DECL_EXPORT void reset_emulator(void) {
     machine.ic_81c55.timer.interval = 16384;
 }
 
-DECL_EXPORT void load_co_file(uint8_t *co_file, int32_t co_file_len) {
+DECL_EXPORT void load_co_file(uint8_t *co_file, int32_t co_file_len, bool insert_jump_at_address_zero) {
     if (co_file_len < 6) {
         die("A valid CO file must be at least as big as the 6 byte header.\n");
     }
@@ -470,13 +470,15 @@ DECL_EXPORT void load_co_file(uint8_t *co_file, int32_t co_file_len) {
 
     memcpy(machine.memory + program_base_addr, program, program_length);
 
-    machine.memory[0] = 0xCD; // CALL
-    machine.memory[1] = program_entry_addr & 0xff;
-    machine.memory[2] = (program_entry_addr >> 8) & 0xff;
-    machine.memory[3] = 0xC3; // JMP
-    machine.memory[4] = 0x0;
-    machine.memory[5] = 0x0;
-    machine.cpu.sp = 0x9DE4; // Taken directly from the debugger in VirtualT.
+    if (insert_jump_at_address_zero) {
+        machine.memory[0] = 0xCD; // CALL
+        machine.memory[1] = program_entry_addr & 0xff;
+        machine.memory[2] = (program_entry_addr >> 8) & 0xff;
+        machine.memory[3] = 0xC3; // JMP
+        machine.memory[4] = 0x0;
+        machine.memory[5] = 0x0;
+        machine.cpu.sp = 0x9DE4; // Taken directly from the debugger in VirtualT.
+    }
 }
 
 DECL_EXPORT void load_rom(uint8_t *rom_data, int32_t rom_size) {
@@ -485,7 +487,7 @@ DECL_EXPORT void load_rom(uint8_t *rom_data, int32_t rom_size) {
 
 DECL_EXPORT void reset_emulator_with_co_file(uint8_t *co_file, int32_t co_file_len) {
     reset_emulator();
-    load_co_file(co_file, co_file_len);
+    load_co_file(co_file, co_file_len, true);
 }
 
 #ifdef TARGET_WEB
@@ -1040,7 +1042,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        load_co_file(co_file_data, (int32_t)file_size);
+        load_co_file(co_file_data, (int32_t)file_size, rom_file_path == NULL);
         free(co_file_data);
     }
 
