@@ -36,8 +36,8 @@
     X(PortRomAm,      0x88) \
     X(PortRomRd,      0x8C) \
     X(PortIoCnt,      0x90) \
-    X(PortIoSts,      0xA0) \
-    X(PortPrtStb,     0xA1) \
+    X(PortBankStatus, 0xA0) \
+    X(PortBankSel,    0xA1) \
     X(Port81C55Cmd,   0xB8) \
     X(Port81C55A,     0xB9) \
     X(Port81C55B,     0xBA) \
@@ -55,10 +55,6 @@ typedef enum {
 #define X(name, val) name = val,
     PC8201_PORTS(X)
 #undef X
-    // Aliases for duplicate hex values
-    PortBnkStt  = 0xA0,
-    PortBnkSel  = 0xA1,
-    PortLcdStat = 0xFE
 } Pc8201Port;
 
 typedef struct {
@@ -109,25 +105,6 @@ enum {
 
 enum { MAX_TIMER_COUNT = (1 << 14) - 1 };
 
-typedef struct {
-    struct {
-
-        // NOTE(jkk): I learned from reading service manual and tech ref that
-        // the timer input is the synchronized to the CPU clock and the timer
-        // output is determined by the mode.
-
-        // The timer output is connected to the buzzer but gated by some lines
-        // that are controlled by other registers in the 80C55.
-
-        uint64_t time_next_period; // total T states
-        uint16_t interval;
-        uint16_t counter; // Only 14 bits
-        Timer_Mode mode;
-    } timer;
-
-    uint8_t latched_port_a;
-} Pc8201_81C55;
-
 typedef uint8_t BreakPointKind;
 enum {
     BP_NONE = 0,
@@ -143,6 +120,14 @@ typedef union {
     uint32_t v;
 } DebuggerLoc;
 
+typedef uint8_t SerialInterfaceSelection;
+enum {
+    SER_NOT_USED = 0,
+    SER_SIO2 = 1,
+    SER_SIO1 = 2,
+    SER_RS232C = 3,
+};
+
 typedef struct {
     Vm_8085 cpu;
     Pc8201Lcd lcd;
@@ -152,7 +137,31 @@ typedef struct {
 
     Pc8201Keyboard key;
 
-    Pc8201_81C55 ic_81c55;
+    struct {
+
+        // NOTE(jkk): I learned from reading service manual and tech ref that
+        // the timer input is the synchronized to the CPU clock and the timer
+        // output is determined by the mode.
+
+        // The timer output is connected to the buzzer but gated by some lines
+        // that are controlled by other registers in the 80C55.
+
+        uint64_t time_next_period; // total T states
+        uint16_t interval;
+        uint16_t counter; // Only 14 bits
+        Timer_Mode mode;
+    } timer;
+
+    struct {
+        uint8_t pio_a;
+        uint8_t pio_b;
+        uint8_t pio_c;
+    } port;
+
+    bool cassette_motor_on;
+    bool clock_command_strobe;
+    bool printer_strobe;
+    SerialInterfaceSelection serial_interface_selection;
 
     bool buzzer_on;
 
@@ -222,10 +231,10 @@ static void loop_cb(Vm_8085 *vm) {
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
 
     // Calculate time from total_t_states
-    while (mach->cpu.total_t_states > mach->ic_81c55.timer.time_next_period) {
-        uint64_t t = mach->cpu.total_t_states - mach->ic_81c55.timer.time_next_period;
-        mach->ic_81c55.timer.counter = t % mach->ic_81c55.timer.interval;
-        mach->ic_81c55.timer.time_next_period += mach->ic_81c55.timer.interval;
+    while (mach->cpu.total_t_states > mach->timer.time_next_period) {
+        uint64_t t = mach->cpu.total_t_states - mach->timer.time_next_period;
+        mach->timer.counter = t % mach->timer.interval;
+        mach->timer.time_next_period += mach->timer.interval;
 
         // Trigger RST 7.5 interrupt edge latch
         vm->rst75_latch = true;
@@ -249,16 +258,45 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     bool handled = false;
 
     switch (port) {
+
+    case PortIoCnt: {
+        if (is_write) {
+            mach->cassette_motor_on          = !!(data & (1 << 3));
+            mach->clock_command_strobe       = !!(data & (1 << 4));
+            mach->printer_strobe             = !!(data & (1 << 5));
+            mach->serial_interface_selection = (data >> 6) & 0x3;
+            handled = true;
+        }
+        else {
+
+        }
+    } break;
+
+    case PortBankStatus: { // 0xA0
+        if (is_write) {
+
+        }
+        else {
+            // TODO(jkk)
+            // *in_out_data = mach->bank_0000_to_7fff_status;
+            // handled = true;
+        }
+    } break;
+
+    case PortBankSel: { // 0xA1
+
+    } break;
+
     case Port81C55A: {
         if (is_write) {
-            mach->ic_81c55.latched_port_a = data;
+            mach->port.pio_a = data;
             mach->key.strobe_a = data;
 
             lcd->driver_select &= 0xff00;
             lcd->driver_select |= data;
         }
         else /* read */ {
-            *in_out_data = mach->ic_81c55.latched_port_a;
+            *in_out_data = mach->port.pio_a;
         }
 
         handled = true;
@@ -292,10 +330,20 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
         }
     } break;
 
+    case Port81C55Cmd: {
+        if (is_write) {
+            // TODO
+        }
+        else /* read */ {
+            *in_out_data = 0x89;
+            handled = true;
+        }
+    } break;
+
     case PortTimerLow: {
         if (is_write) {
-            mach->ic_81c55.timer.interval &= 0xff00;
-            mach->ic_81c55.timer.interval |= data;
+            mach->timer.interval &= 0xff00;
+            mach->timer.interval |= data;
             handled = true;
         }
         else /* read */ {
@@ -305,9 +353,9 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
     case PortTimerHigh: {
         if (is_write) {
-            mach->ic_81c55.timer.interval &= 0xC0ff;
-            mach->ic_81c55.timer.interval |= (((uint16_t)(data & 0x3f)) << 8);
-            mach->ic_81c55.timer.mode = (data >> 6) & 3;
+            mach->timer.interval &= 0xC0ff;
+            mach->timer.interval |= (((uint16_t)(data & 0x3f)) << 8);
+            mach->timer.mode = (data >> 6) & 3;
             handled = true;
         }
         else /* read */ {
@@ -424,8 +472,8 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     if (!handled) {
         const char *portstr = string_from_port(port);
         uint64_t t = mach->cpu.total_t_states;
-        if (is_write) fprintf(stderr, "@: %04X T: %"PRIu64" - IO WRITE port %02X (%15.20s), value = %02x ("BINPAT");\n", mach->cpu.pc, t, port, portstr, data, BYTE_TO_BIN(data));
-        else fprintf(stderr, "@: %04X T: %"PRIu64" - IO READ  port %02X (%15.20s);\n", mach->cpu.pc, t, port, portstr);
+        if (!is_write) data = *in_out_data;
+        fprintf(stderr, "@: %04X T: %"PRIu64" - IO %s port %02X (%15.20s), value = %02x ("BINPAT");\n", mach->cpu.pc, t, is_write ? "WRITE" : "READ ", port, portstr, data, BYTE_TO_BIN(data));
     }
 
     return handled;
@@ -449,7 +497,7 @@ DECL_EXPORT void reset_emulator(void) {
     machine.cpu.loop_cb = loop_cb;
     machine.cpu.user_data = (void *)&machine;
 
-    machine.ic_81c55.timer.interval = 16384;
+    machine.timer.interval = 16384;
 }
 
 DECL_EXPORT void load_co_file(uint8_t *co_file, int32_t co_file_len, bool insert_jump_at_address_zero) {
