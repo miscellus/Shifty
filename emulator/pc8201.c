@@ -152,11 +152,7 @@ typedef struct {
         Timer_Mode mode;
     } timer;
 
-    struct {
-        uint8_t pio_a;
-        uint8_t pio_b;
-        uint8_t pio_c;
-    } port;
+    uint8_t ports_prev[256];
 
     bool cassette_motor_on;
     bool clock_command_strobe;
@@ -254,6 +250,8 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
     Pc8201Lcd *lcd = &mach->lcd;
     uint8_t data = is_write ? *in_out_data : 0;
+    uint8_t data_prev = mach->ports_prev[port];
+    if (!is_write) *in_out_data = data_prev;
 
     bool handled = false;
 
@@ -276,29 +274,32 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
         if (is_write) {
 
         }
-        else {
-            // TODO(jkk)
-            // *in_out_data = mach->bank_0000_to_7fff_status;
-            // handled = true;
+        else /* read */ {
+
+            *in_out_data = (
+                mach->bank_id[0] |
+                (mach->bank_id[1] << 2) |
+                (mach->serial_interface_selection << 6));
+
+            handled = true;
         }
     } break;
 
     case PortBankSel: { // 0xA1
-
+        if (is_write) {
+            mach->bank_id[0] = data & 3;
+            mach->bank_id[1] = (data >> 2) & 3;
+        }
+        handled = true;
     } break;
 
     case Port81C55A: {
         if (is_write) {
-            mach->port.pio_a = data;
             mach->key.strobe_a = data;
 
             lcd->driver_select &= 0xff00;
             lcd->driver_select |= data;
         }
-        else /* read */ {
-            *in_out_data = mach->port.pio_a;
-        }
-
         handled = true;
     } break;
  
@@ -496,6 +497,9 @@ DECL_EXPORT void reset_emulator(void) {
     machine.cpu.mem_cb = mem_cb;
     machine.cpu.loop_cb = loop_cb;
     machine.cpu.user_data = (void *)&machine;
+
+    machine.bank_id[0] = BANK_ROM_0;
+    machine.bank_id[1] = BANK_RAM_0;
 
     machine.timer.interval = 16384;
 }

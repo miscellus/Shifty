@@ -30,7 +30,7 @@ $(BUILD_DIR):
 	mkdir -p $@
 
 # --- Web Assembly Target ---
-$(WEB_WASM): $(WASM_SOURCE) | $(BUILD_DIR)
+$(WEB_WASM): $(WASM_SOURCE) emulator/vm8085.h | $(BUILD_DIR)
 	$(WASM_CC) --target=wasm32 \
 		$(WASM_FLAGS) \
 		$(WASM_LDFLAGS) \
