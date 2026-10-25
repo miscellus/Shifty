@@ -84,25 +84,10 @@ typedef struct {
 
 typedef uint8_t Timer_Mode;
 enum {
-    // This-mode transmits a single-
-    // square wave which the first
-    // half of the number of count
-    // is high and remaining 1s low.
-    TIMER_ONE_SHOT_SQUARE = 0,
-
-    // This mode continually transmits
-    // a Mode 0 type square wave.
-    TIMER_CONTINOUS_SQUARE = 1,
-
-    // This mode transmits a L-pulse
-    // (single pulse) during one
-    // clock when finishing the
-    // terminal count.
-    TIMER_ONE_SHOT_PULSE = 2,
-
-    // This mode continually transmits
-    // a Mode 2 type pulse.
-    TIMER_CONTINOUS_PULSE = 3,
+    TIMER_SINGLE_SQUARE = 0, // ceil(count/2) HIGH, then floor(count/2) LOW, not repeated
+    TIMER_REPEATED_SQUARE = 1, // ceil(count/2) HIGH, then floor(count/2) LOW, repeated
+    TIMER_SINGLE_PULSE = 2, // count - 1 LOW, then 1 HIGH, not repeated
+    TIMER_REPEATED_PULSE = 3, // count - 1 LOW, then 1 HIGH, repeated
 };
 
 enum { MAX_TIMER_COUNT = (1 << 14) - 1 };
