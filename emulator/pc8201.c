@@ -59,10 +59,11 @@ typedef enum {
 
 typedef struct {
     uint8_t bytes[50][4];
-    uint8_t page; // 0-3
-    uint8_t offset; // 0-49
+    uint8_t page; // 0..3
+    uint8_t offset; // 0..49
+    uint8_t start_page; // 0..3
+    bool display_on;
     bool is_counter_mode_down;
-
     uint8_t read_buffer;
     bool read_buffer_valid;
 } Pc8201LcdDriver;
@@ -287,7 +288,7 @@ static void loop_cb(Vm_8085 *vm) {
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
 
     // Calculate time from total_t_states
-    while (mach->cpu.total_t_states > mach->timer.time_next_period) {
+    while (mach->cpu.total_t_states >= mach->timer.time_next_period) {
         uint64_t t = mach->cpu.total_t_states - mach->timer.time_next_period;
         mach->timer.counter = t % mach->timer.interval;
         mach->timer.time_next_period += mach->timer.interval;
@@ -317,7 +318,34 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     switch (port) {
 
     case PortIoCnt: {
+
+        // TODO(jkk):
+        // Reading/writing data with CMT is done via SID Pin ,SOD Pin of
+        // CPU(80C85). And Motor is controlled by SCP (System Control
+        // Port,^X90). The on-bit, Logical High, is represented by 2400Hz
+        // wave (called MARK) and the off-bit, Logical Low, is 1200Hz
+        // wave (called SPACE). So the Baud Rate of the CMT can be up to 1200
+        // bps, bit per second. ( System ROM, ROM #0 Uses 600 bps to maintain
+        // the compatibility with PC-8001A.)
+
+        // 11.1.1
+        //  Writing Operation.
+        // While SOD is high, MARK is put out to MIC and TxC.
+        // Otherwise, SPACE is put out. Refer the next illustration.
+
+        // 11.1.2
+        //  Reading Operation.
+        // Input wave from EAR Pin' is performed to Square wave and
+        // sent to SID Pin of 80C8S as shown olow. The input wave is
+        // inverted on the way to SID Pin from EAR Pin.
+        //  In reading
+        // operation, the electric high/low. level has no meaning. The
+        // pulse frequency indicate whether high or low of the data. The
+        // frequency, 2400Hz means logical high ,and the frequency,
+        // 1200Hz means low.
+
         if (is_write) {
+
             mach->cassette_motor_on          = !!(data & (1 << 3));
             mach->clock_command_strobe       = !!(data & (1 << 4));
             mach->printer_strobe             = !!(data & (1 << 5));
@@ -424,29 +452,45 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
     //case PortLcdStat alias
     case PortLcdCmd : {
-        if (is_write) {
-            uint8_t cmd = data;
+        uint8_t cmd = data;
 
-            for (int i = 0; i < 10; ++i) {
-                if (!(lcd->driver_select & (1 << i))) continue;
+        uint16_t select = lcd->driver_select;
+        select &= -select; // Only allow 1 selected
 
-                Pc8201LcdDriver *driv = &lcd->drivers[i];
+        for (int i = 0; i < 10; ++i) {
+            if (!(select & (1 << i))) continue;
 
-                // Handle the Up/Down selection command (0x3A / 0x3B)
-                if ((cmd & 0xFE) == 0x3A) {
-                    driv->is_counter_mode_down = !(cmd & 0x01); // 1 = Up Counter, 0 = Down Counter
+            Pc8201LcdDriver *driv = &lcd->drivers[i];
+
+            if (is_write) {
+                if ((cmd & 0xfe) == 0x38) {
+                    // Command: DISPLAY ON/OFF
+                    driv->display_on = (cmd & 1) != 0;
+                }
+                else if ((cmd & 0x3f) == 0x3f) {
+                    // Command: Start page offset
+                    driv->start_page = (cmd >> 6) & 0x03;
+                }
+                else if ((cmd & 0xfe) == 0x32) {
+                    // Command: Set up/down offset counter mode
+                    driv->is_counter_mode_down = (cmd & 1) == 0; // 1 = Up Counter, 0 = Down Counter
                 }
                 else {
+                    // Command: Set page and offset
                     driv->page = (cmd >> 6) & 0x3;
                     driv->offset = cmd & 0x3F;
                     driv->read_buffer_valid = false;
                 }
             }
+            else /* read */ {
+                *in_out_data = (
+                    (driv->display_on ? (1 << 5) : 0) |
+                    (driv->is_counter_mode_down ? (1 << 6) : 0));
+            }
+
+            break;
         }
-        else /* read */ {
-            *in_out_data = 0x00; // bit 7 is 0 to indicate LCD ready (For now the LCD is always ready)
-            // TODO(jkk): What about the other flags?
-        }
+
         handled = true;
     } break;
 
@@ -460,7 +504,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
             if (is_write) {
                 if (valid_address)
-                    driv->bytes[driv->offset][driv->page] = data;
+                    driv->bytes[driv->offset][(driv->page + driv->start_page) & 3] = data;
             } else {
                 *in_out_data = driv->read_buffer_valid
                     ? driv->read_buffer
