@@ -27,15 +27,15 @@
 
 
 #define PC8201_PORTS(X) \
-    X(PortA8255,      0x70) \
-    X(PortB8255,      0x71) \
-    X(PortC8255,      0x72) \
-    X(PortCW8255,     0x73) \
-    X(PortRomAh,      0x80) \
-    X(PortRomAl,      0x84) \
-    X(PortRomAm,      0x88) \
-    X(PortRomRd,      0x8C) \
-    X(PortIoCnt,      0x90) \
+    X(PortExtVidA,    0x70) \
+    X(PortExtVidB,    0x71) \
+    X(PortExtVidC,    0x72) \
+    X(PortExtVidCmd,  0x73) \
+    X(PortRom128KHi,  0x80) \
+    X(PortRom128KLo,  0x84) \
+    X(PortRom128KMid, 0x88) \
+    X(PortRom128KRead,0x8C) \
+    X(PortIoCtl,      0x90) \
     X(PortBankStatus, 0xA0) \
     X(PortBankSel,    0xA1) \
     X(Port81C55Cmd,   0xB8) \
@@ -44,8 +44,8 @@
     X(Port81C55C,     0xBB) \
     X(PortTimerLow,   0xBC) \
     X(PortTimerHigh,  0xBD) \
-    X(PortTxRxD,      0xC8) \
-    X(PortCs6402,     0xD8) \
+    X(PortSerialData, 0xC8) \
+    X(PortSerialCtl,  0xD8) \
     X(PortKeyIn,      0xE8) \
     X(PortLcdCmd,     0xFE) \
     X(PortLcdData,    0xFF) \
@@ -64,14 +64,15 @@ typedef struct {
     uint8_t start_page; // 0..3
     bool display_on;
     bool is_counter_mode_down;
-    uint8_t read_buffer;
-    bool read_buffer_valid;
+    uint8_t output_register;
+
+    uint64_t t_state_ready;
 } Pc8201LcdDriver;
 
 typedef struct {
     Pc8201LcdDriver drivers[10];
     uint16_t driver_select; // bit 0 selects driver 0, 1 selects driver 1, ... , 10 selects driver 10.
-
+    bool on;
     // 32-bit RGBA buffer that JavaScript will read directly to draw to the HTML5 canvas
 } Pc8201Lcd;
 
@@ -317,7 +318,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
     switch (port) {
 
-    case PortIoCnt: {
+    case PortIoCtl: {
 
         // TODO(jkk):
         // Reading/writing data with CMT is done via SID Pin ,SOD Pin of
@@ -479,13 +480,18 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
                     // Command: Set page and offset
                     driv->page = (cmd >> 6) & 0x3;
                     driv->offset = cmd & 0x3F;
-                    driv->read_buffer_valid = false;
                 }
+
+                driv->t_state_ready = mach->cpu.total_t_states + 8;
             }
             else /* read */ {
+                bool busy = driv->t_state_ready > mach->cpu.total_t_states;
+
                 *in_out_data = (
+                    (busy ? (1 << 4) : 0) |
                     (driv->display_on ? (1 << 5) : 0) |
-                    (driv->is_counter_mode_down ? (1 << 6) : 0));
+                    (driv->is_counter_mode_down ? 0 : (1 << 6)) |
+                    (busy ? (1 << 7) : 0));
             }
 
             break;
@@ -503,19 +509,15 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
             bool valid_address = driv->offset < 50 && driv->page < 4;
 
             if (is_write) {
-                if (valid_address)
+                if (valid_address) {
                     driv->bytes[driv->offset][(driv->page + driv->start_page) & 3] = data;
+                    driv->t_state_ready = mach->cpu.total_t_states + 8;
+                }
             } else {
-                *in_out_data = driv->read_buffer_valid
-                    ? driv->read_buffer
-                    : 0x00;  // Dummy read value; software discards this.
+                *in_out_data = driv->output_register;
 
                 if (valid_address) {
-                    driv->read_buffer =
-                        driv->bytes[driv->offset][driv->page];
-                    driv->read_buffer_valid = true;
-                } else {
-                    driv->read_buffer_valid = false;
+                    driv->output_register = driv->bytes[driv->offset][(driv->page + driv->start_page) & 3];
                 }
             }
 
