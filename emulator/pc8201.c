@@ -128,12 +128,72 @@ enum {
     SER_RS232C = 3,
 };
 
+#define BANK_SIZE (32*1024)
+
+typedef struct {
+    uint8_t *base;
+    bool writeable;
+} MemPage;
+
+typedef struct {
+    uint8_t system_rom[BANK_SIZE];
+    uint8_t option_rom[BANK_SIZE];
+    uint8_t ram_banks[4][BANK_SIZE];
+    MemPage pages[2];
+    uint8_t low_address_select;
+    uint8_t high_address_select;
+} Memory;
+
+static void memory_init(Memory *mem) {
+    // Low page: System ROM (read-only)
+    mem->pages[0].base = mem->system_rom;
+    mem->pages[0].writeable = false;
+
+    // High page: RAM Bank 0 / Bank 1 (writable)
+    mem->pages[1].base = mem->ram_banks[0];
+    mem->pages[1].writeable = true;
+}
+
+static void memory_bank_set(Memory *mem, uint8_t data) {
+    uint8_t ladr = data & 0x03;
+    uint8_t hadr = (data >> 2) & 0x03;
+
+    mem->low_address_select = ladr;
+    mem->high_address_select = hadr;
+
+    switch (ladr) {
+        case 0:  mem->pages[0] = (MemPage){mem->system_rom, false}; break;
+        case 1:  mem->pages[0] = (MemPage){mem->option_rom, false}; break;
+        case 2:  mem->pages[0] = (MemPage){mem->ram_banks[1], true}; break;
+        case 3:  mem->pages[0] = (MemPage){mem->ram_banks[2], true}; break;
+    }
+
+    switch (hadr) {
+        case 0:  mem->pages[1] = (MemPage){mem->ram_banks[0], true}; break;
+        case 1:  mem->pages[1] = (MemPage){mem->ram_banks[0], true}; break; // HADR = 1 ("NOT USED")
+        case 2:  mem->pages[1] = (MemPage){mem->ram_banks[1], true}; break;
+        case 3:  mem->pages[1] = (MemPage){mem->ram_banks[2], true}; break;
+    }
+}
+
+static inline uint8_t memory_read(Memory *mem, uint16_t address) {
+    uint8_t idx = address >> 15;
+    return mem->pages[idx].base[address & 0x7FFF];
+}
+
+static inline void memory_write(Memory *mem, uint16_t address, uint8_t data) {
+    uint8_t idx = address >> 15;
+    if (mem->pages[idx].writeable) {
+        mem->pages[idx].base[address & 0x7FFF] = data;
+    }
+}
+
 typedef struct {
     Vm_8085 cpu;
     Pc8201Lcd lcd;
     uint32_t canvas[SCREEN_WIDTH * SCREEN_HEIGHT];
 
-    uint8_t memory[65536]; // TODO(jkk): Banking
+    Memory mem;
 
     Pc8201Keyboard key;
 
@@ -216,10 +276,10 @@ static void mem_cb(Vm_8085 *vm, uint16_t addr, bool is_write, uint8_t *in_out_da
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
 
     if (is_write) {
-        mach->memory[addr] = *in_out_data;
+        memory_write(&mach->mem, addr, *in_out_data);
     }
     else {
-        *in_out_data = mach->memory[addr];
+        *in_out_data = memory_read(&mach->mem, addr);
     }
 }
 
@@ -243,7 +303,6 @@ static void loop_cb(Vm_8085 *vm) {
 #else
 #define fprintf(...) ((void)0)
 #endif
-
 
 static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data)
 {
@@ -277,8 +336,8 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
         else /* read */ {
 
             *in_out_data = (
-                mach->bank_id[0] |
-                (mach->bank_id[1] << 2) |
+                mach->mem.low_address_select |
+                (mach->mem.high_address_select << 2) |
                 (mach->serial_interface_selection << 6));
 
             handled = true;
@@ -287,8 +346,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
     case PortBankSel: { // 0xA1
         if (is_write) {
-            mach->bank_id[0] = data & 3;
-            mach->bank_id[1] = (data >> 2) & 3;
+            memory_bank_set(&mach->mem, data);
         }
         handled = true;
     } break;
@@ -498,8 +556,7 @@ DECL_EXPORT void reset_emulator(void) {
     machine.cpu.loop_cb = loop_cb;
     machine.cpu.user_data = (void *)&machine;
 
-    machine.bank_id[0] = BANK_ROM_0;
-    machine.bank_id[1] = BANK_RAM_0;
+    memory_init(&machine.mem);
 
     machine.timer.interval = 16384;
 }
@@ -518,21 +575,24 @@ DECL_EXPORT void load_co_file(uint8_t *co_file, int32_t co_file_len, bool insert
         die("CO file length does not match file header.\n");
     }
 
-    memcpy(machine.memory + program_base_addr, program, program_length);
+    for (uint16_t i = 0; i < program_length; ++i) {
+        memory_write(&machine.mem, program_base_addr + i, program[i]);
+    }
 
     if (insert_jump_at_address_zero) {
-        machine.memory[0] = 0xCD; // CALL
-        machine.memory[1] = program_entry_addr & 0xff;
-        machine.memory[2] = (program_entry_addr >> 8) & 0xff;
-        machine.memory[3] = 0xC3; // JMP
-        machine.memory[4] = 0x0;
-        machine.memory[5] = 0x0;
+        machine.mem.system_rom[0] = 0xCD; // CALL
+        machine.mem.system_rom[1] = program_entry_addr & 0xff;
+        machine.mem.system_rom[2] = (program_entry_addr >> 8) & 0xff;
+        machine.mem.system_rom[3] = 0xC3; // JMP
+        machine.mem.system_rom[4] = 0x0;
+        machine.mem.system_rom[5] = 0x0;
         machine.cpu.sp = 0x9DE4; // Taken directly from the debugger in VirtualT.
     }
 }
 
 DECL_EXPORT void load_rom(uint8_t *rom_data, int32_t rom_size) {
-    memcpy(machine.memory, rom_data, rom_size);
+    assert(rom_size == (1 << 15));
+    memcpy(machine.mem.system_rom, rom_data, rom_size);
 }
 
 DECL_EXPORT void reset_emulator_with_co_file(uint8_t *co_file, int32_t co_file_len) {
