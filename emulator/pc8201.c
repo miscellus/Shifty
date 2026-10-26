@@ -82,16 +82,6 @@ typedef struct {
     uint8_t strobe_b;  // State of Port 0xBA (PB0)
 } Pc8201Keyboard;
 
-typedef uint8_t Timer_Mode;
-enum {
-    TIMER_SINGLE_SQUARE = 0, // ceil(count/2) HIGH, then floor(count/2) LOW, not repeated
-    TIMER_REPEATED_SQUARE = 1, // ceil(count/2) HIGH, then floor(count/2) LOW, repeated
-    TIMER_SINGLE_PULSE = 2, // count - 1 LOW, then 1 HIGH, not repeated
-    TIMER_REPEATED_PULSE = 3, // count - 1 LOW, then 1 HIGH, repeated
-};
-
-enum { MAX_TIMER_COUNT = (1 << 14) - 1 };
-
 typedef uint8_t BreakPointKind;
 enum {
     BP_NONE = 0,
@@ -175,16 +165,16 @@ static inline void memory_write(Memory *mem, uint16_t address, uint8_t data) {
     }
 }
 
+
+enum { MAX_TIMER_COUNT = (1 << 14) - 1 };
+typedef enum {
+    TIMER_SINGLE_SQUARE = 0,   // ceil(count/2) ticks HIGH, then floor(count/2) ticks LOW, not repeated
+    TIMER_REPEATED_SQUARE = 1, // ceil(count/2) ticks HIGH, then floor(count/2) ticks LOW, repeated
+    TIMER_SINGLE_PULSE = 2,    // |L|L count - 1 ticks LOW, then 1 tick HIGH, not repeated
+    TIMER_REPEATED_PULSE = 3, // count - 1 ticks LOW, then 1 tick HIGH, repeated
+} Timer_Mode;
+
 typedef struct {
-    Vm_8085 cpu;
-    Pc8201Lcd lcd;
-    uint32_t canvas[SCREEN_WIDTH * SCREEN_HEIGHT];
-
-    Memory mem;
-
-    Pc8201Keyboard key;
-
-    struct {
 
         // NOTE(jkk): I learned from reading service manual and tech ref that
         // the timer input is the synchronized to the CPU clock and the timer
@@ -194,10 +184,30 @@ typedef struct {
         // that are controlled by other registers in the 80C55.
 
         uint64_t time_next_period; // total T states
-        uint16_t interval;
+        uint16_t target_count;
         uint16_t counter; // Only 14 bits
         Timer_Mode mode;
-    } timer;
+} Ic_80C55_Timer;
+
+typedef struct {
+
+    uint64_t time_next_interrupt;
+    enum { CAL_CLOCK_256HZ = 0 } mode;
+
+} Ic_1990_Clock;
+
+typedef struct {
+    Vm_8085 cpu;
+    Pc8201Lcd lcd;
+    uint32_t canvas[SCREEN_WIDTH * SCREEN_HEIGHT];
+
+    Memory mem;
+
+    Pc8201Keyboard key;
+
+    Ic_80C55_Timer timer;
+
+    Ic_1990_Clock clock;
 
     uint8_t ports_prev[256];
 
@@ -276,8 +286,8 @@ static void loop_cb(Vm_8085 *vm) {
     // Calculate time from total_t_states
     while (mach->cpu.total_t_states >= mach->timer.time_next_period) {
         uint64_t t = mach->cpu.total_t_states - mach->timer.time_next_period;
-        mach->timer.counter = t % mach->timer.interval;
-        mach->timer.time_next_period += mach->timer.interval;
+        mach->timer.counter = t % mach->timer.target_count;
+        mach->timer.time_next_period += mach->timer.target_count;
 
         // Trigger RST 7.5 interrupt edge latch
         vm->rst75_latch = true;
@@ -415,8 +425,8 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
     case PortTimerLow: {
         if (is_write) {
-            mach->timer.interval &= 0xff00;
-            mach->timer.interval |= data;
+            mach->timer.target_count &= 0xff00;
+            mach->timer.target_count |= data;
             handled = true;
         }
         else /* read */ {
@@ -426,8 +436,8 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
     case PortTimerHigh: {
         if (is_write) {
-            mach->timer.interval &= 0xC0ff;
-            mach->timer.interval |= (((uint16_t)(data & 0x3f)) << 8);
+            mach->timer.target_count &= 0xC0ff;
+            mach->timer.target_count |= (((uint16_t)(data & 0x3f)) << 8);
             mach->timer.mode = (data >> 6) & 3;
             handled = true;
         }
@@ -589,7 +599,7 @@ DECL_EXPORT void reset_emulator(void) {
 
     memory_init(&machine.mem);
 
-    machine.timer.interval = 16384;
+    machine.timer.target_count = 16384;
 }
 
 DECL_EXPORT void load_co_file(uint8_t *co_file, int32_t co_file_len, bool insert_jump_at_address_zero) {
