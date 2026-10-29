@@ -17,7 +17,7 @@
 
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 64
-#define CPU_CLOCK_FREQ 2457600.0 // 2.4576 MHz
+#define CPU_CLOCK_FREQ 2457600 // 2.4576 MHz
 
 #ifdef TARGET_WEB
 #define DECL_EXPORT __attribute__((visibility("default")))
@@ -189,14 +189,61 @@ typedef struct {
         Timer_Mode mode;
 } Ic_80C55_Timer;
 
+typedef enum Ic_Clock_Command {
+    CLOCK_CMD_REGISTER_HOLD = 0,
+    CLOCK_CMD_REGISTER_SHIFT = 1,
+    CLOCK_CMD_TIME_SET_COUNTER_HOLD = 2,
+    CLOCK_CMD_TIME_READ = 3,
+
+    CLOCK_CMD_FREQ_64 = 4,
+    CLOCK_CMD_FREQ_256 = 5,
+    CLOCK_CMD_FREQ_2048 = 6,
+    CLOCK_CMD_TEST_MODE = 7,
+} Ic_Clock_Command;
+
+typedef struct {
+    uint64_t time_interval_ns;
+    uint64_t time_next_pulse_ns;
+
+    uint64_t shift_register; // 40 bits
+} Ic_Clock;
+
+#define FREQ_PERIOD_NS(FREQ) (1000000000/(FREQ))
+
+void clock_command(Ic_Clock *clock, Ic_Clock_Command command, bool shift_on, uint64_t data_bit) {
+    (void)shift_on;
+    (void)data_bit;
+
+    switch (command) {
+    case CLOCK_CMD_REGISTER_HOLD:         /*printf("TODO:CLOCK_CMD_REGISTER_HOLD\n");*/ break;
+    case CLOCK_CMD_REGISTER_SHIFT:        /*printf("TODO:CLOCK_CMD_REGISTER_SHIFT\n");*/ break;
+    case CLOCK_CMD_TIME_SET_COUNTER_HOLD: /*printf("TODO:CLOCK_CMD_TIME_SET_COUNTER_HOLD\n");*/ break;
+    case CLOCK_CMD_TIME_READ:             /*printf("TODO:CLOCK_CMD_TIME_READ\n");*/ break;
+    case CLOCK_CMD_FREQ_64:               clock->time_interval_ns = FREQ_PERIOD_NS(64); break;
+    case CLOCK_CMD_FREQ_256:              clock->time_interval_ns = FREQ_PERIOD_NS(256); break;
+    case CLOCK_CMD_FREQ_2048:             clock->time_interval_ns = FREQ_PERIOD_NS(2048); break;
+    case CLOCK_CMD_TEST_MODE: assert(!"CLOCK_CMD_TEST_MODE not emulated"); break;
+    }
+}
+
+
+#define AUDIO_SAMPLE_BUFFER_SIZE      1024
+#define AUDIO_SAMPLE_RATE      22050
+#define AUIDO_SAMPLE_PERIOD_NS FREQ_PERIOD_NS(AUDIO_SAMPLE_RATE)
+
+typedef struct {
+    float sample_buffer[AUDIO_SAMPLE_BUFFER_SIZE];
+    uint64_t write_index;
+    uint64_t read_index;
+
+    uint64_t time_last_sample_ns;
+} Audio;
+
 typedef struct {
 
-    uint64_t time_next_interrupt;
-    enum { CAL_CLOCK_256HZ = 0 } mode;
+    uint64_t clock_period_ns;
+    uint64_t time_ns;
 
-} Ic_1990_Clock;
-
-typedef struct {
     Vm_8085 cpu;
     Pc8201Lcd lcd;
     uint32_t canvas[SCREEN_WIDTH * SCREEN_HEIGHT];
@@ -207,7 +254,9 @@ typedef struct {
 
     Ic_80C55_Timer timer;
 
-    Ic_1990_Clock clock;
+    Ic_Clock clock;
+
+    Audio audio;
 
     uint8_t ports_prev[256];
 
@@ -280,14 +329,50 @@ static void mem_cb(Vm_8085 *vm, uint16_t addr, bool is_write, uint8_t *in_out_da
     }
 }
 
+#include <math.h>
+
 static void loop_cb(Vm_8085 *vm) {
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
 
+    // Update time
+    mach->time_ns = mach->cpu.total_t_states * mach->clock_period_ns;
+
     // Calculate time from total_t_states
+{
+    static float phase = 0.0f;
+    const float two_pi = 6.28318530718f;
+    const float phase_step =
+        two_pi * 440.0f / (float)AUDIO_SAMPLE_RATE;
+
+    uint64_t elapsed_ns_since_last_sample =
+        mach->time_ns - mach->audio.time_last_sample_ns;
+    uint64_t n =
+        elapsed_ns_since_last_sample / AUIDO_SAMPLE_PERIOD_NS;
+
+    for (uint64_t i = 0; i < n; ++i) {
+        mach->audio.sample_buffer[mach->audio.write_index] =
+            0.2f * sinf(phase);
+
+        phase += phase_step;
+        if (phase >= two_pi)
+            phase -= two_pi;
+
+        if (++mach->audio.write_index >= AUDIO_SAMPLE_BUFFER_SIZE)
+            mach->audio.write_index = 0;
+    }
+
+    mach->audio.time_last_sample_ns += n * AUIDO_SAMPLE_PERIOD_NS;
+}
+
     while (mach->cpu.total_t_states >= mach->timer.time_next_period) {
         uint64_t t = mach->cpu.total_t_states - mach->timer.time_next_period;
         mach->timer.counter = t % mach->timer.target_count;
         mach->timer.time_next_period += mach->timer.target_count;
+    }
+
+    // Calendar clock pulses
+    while (mach->time_ns >= mach->clock.time_next_pulse_ns) {
+        mach->clock.time_next_pulse_ns += mach->clock.time_interval_ns;
 
         // Trigger RST 7.5 interrupt edge latch
         vm->rst75_latch = true;
@@ -381,6 +466,11 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
             lcd->driver_select &= 0xff00;
             lcd->driver_select |= data;
+
+            Ic_Clock_Command cmd = data & 3;
+            bool shift_clock_on = !!((data >> 3) & 1);
+            uint64_t data_bit = (data >> 4) & 1;
+            clock_command(&mach->clock, cmd, shift_clock_on, data_bit);
         }
         handled = true;
     } break;
@@ -583,7 +673,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 #include <stdlib.h>
 #endif
 
-DECL_EXPORT void reset_emulator(void) {
+DECL_EXPORT void reset_emulator(uint64_t clock_frequency) {
     memset(&machine, 0, sizeof(machine));
 
     for (int i = 0; i < 9; i++) {
@@ -600,6 +690,9 @@ DECL_EXPORT void reset_emulator(void) {
     memory_init(&machine.mem);
 
     machine.timer.target_count = 16384;
+    machine.clock.time_interval_ns = FREQ_PERIOD_NS(256); // 256 herz is the default for PC-8201
+
+    machine.clock_period_ns = FREQ_PERIOD_NS(clock_frequency);
 }
 
 DECL_EXPORT void load_co_file(uint8_t *co_file, int32_t co_file_len, bool insert_jump_at_address_zero) {
@@ -637,7 +730,7 @@ DECL_EXPORT void load_rom(uint8_t *rom_data, int32_t rom_size) {
 }
 
 DECL_EXPORT void reset_emulator_with_co_file(uint8_t *co_file, int32_t co_file_len) {
-    reset_emulator();
+    reset_emulator(CPU_CLOCK_FREQ);
     load_co_file(co_file, co_file_len, true);
 }
 
@@ -1055,37 +1148,40 @@ GLuint compile_shader(GLenum type, const char* src) {
 
 #define SAMPLE_RATE 22050
 
-void update_audio(SDL_AudioStream *audio_stream) {
-    static int current_sine_sample = 0;
+static void update_audio(Pc8201Machine *mach, SDL_AudioStream *stream)
+{
+    enum { CHUNK_SAMPLES = 128, TARGET_SAMPLES = 512 };
 
-    const int minimum_audio = 128;
-    if (SDL_GetAudioStreamQueued(audio_stream) < minimum_audio) {
-        static float samples[512];  /* this will feed 512 samples each frame until we get to our maximum. */
-        enum { PREV_SAMPLE_COUNT = 32 };
-        static float prev_samples[PREV_SAMPLE_COUNT];
-        float mute_factor = machine.buzzer_on ? 1.0f : 0.0f;
+    int queued_bytes = SDL_GetAudioStreamQueued(stream);
+    if (queued_bytes < 0) return;
 
-        /* generate a 440Hz pure tone */
-        for (uint32_t i = 0; i < SDL_arraysize(samples); i++) {
-            const int freq = 440;
-            const float phase = current_sine_sample * freq / (float)SAMPLE_RATE;
-            samples[i] = mute_factor * (SDL_fmodf(phase, 1.0f) > 0.5f ? 1.0f : -1.0f);
-            samples[i] /= (float)(PREV_SAMPLE_COUNT + 1);
+    const int target_bytes = TARGET_SAMPLES * (int)sizeof(float);
+    const uint64_t size = AUDIO_SAMPLE_BUFFER_SIZE;
+    uint64_t available =
+        (mach->audio.write_index + size - mach->audio.read_index) % size;
 
-            for (uint32_t s = 0; s < SDL_arraysize(prev_samples); ++s)
-                samples[i] += prev_samples[s] / (float) (PREV_SAMPLE_COUNT + 1);
+    while (available >= CHUNK_SAMPLES && queued_bytes < target_bytes) {
+        uint64_t count = CHUNK_SAMPLES;
+        uint64_t contiguous = size - mach->audio.read_index;
+        uint64_t room = (uint64_t)(target_bytes - queued_bytes) / sizeof(float);
 
-            for (uint32_t s = SDL_arraysize(prev_samples) - 1; s > 0; --s)
-                prev_samples[s] = prev_samples[s-1];
+        if (count > contiguous) count = contiguous;
+        if (count > available) count = available;
+        if (count > room) count = room;
+        if (count == 0) break;
 
-            current_sine_sample++;
+        int bytes = (int)(count * sizeof(float));
+        if (!SDL_PutAudioStreamData(
+                stream,
+                mach->audio.sample_buffer + mach->audio.read_index,
+                bytes)) {
+            fprintf(stderr, "SDL_PutAudioStreamData: %s\n", SDL_GetError());
+            return;
         }
 
-        /* wrapping around to avoid floating-point errors */
-        current_sine_sample %= SAMPLE_RATE;
-
-        /* feed the new data to the stream. It will queue at the end, and trickle out as the hardware needs more data. */
-        SDL_PutAudioStreamData(audio_stream, samples, sizeof (samples));
+        mach->audio.read_index = (mach->audio.read_index + count) % size;
+        available -= count;
+        queued_bytes += bytes;
     }
 }
 
@@ -1152,7 +1248,7 @@ int main(int argc, char* argv[]) {
         }
         else if (strcmp(arg, "co-file") == 0) {
             if (!(co_file_path = arg_shift(argc, argv))) {
-                SDL_Log("TODO(jkk): Missing argument <CO File path>.\n");
+                SDL_Log("Missing argument <CO File path>.\n");
                 return 1;
             }
         }
@@ -1161,7 +1257,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    reset_emulator();
+    reset_emulator(CPU_CLOCK_FREQ);
 
     if (rom_file_path) {
         size_t rom_size = 0;
@@ -1321,7 +1417,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Audio
-        update_audio(audio_stream);
+        update_audio(&machine, audio_stream);
 
         int window_w, window_h;
         SDL_GetWindowSizeInPixels(window, &window_w, &window_h);
