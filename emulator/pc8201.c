@@ -27,35 +27,49 @@
 
 
 #define PC8201_PORTS(X) \
-    X(PortExtVidA,    0x70) \
-    X(PortExtVidB,    0x71) \
-    X(PortExtVidC,    0x72) \
-    X(PortExtVidCmd,  0x73) \
-    X(PortRom128KHi,  0x80) \
-    X(PortRom128KLo,  0x84) \
-    X(PortRom128KMid, 0x88) \
-    X(PortRom128KRead,0x8C) \
-    X(PortIoCtl,      0x90) \
-    X(PortBankStatus, 0xA0) \
-    X(PortBankSel,    0xA1) \
-    X(Port81C55Cmd,   0xB8) \
-    X(Port81C55A,     0xB9) \
-    X(Port81C55B,     0xBA) \
-    X(Port81C55C,     0xBB) \
-    X(PortTimerLow,   0xBC) \
-    X(PortTimerHigh,  0xBD) \
-    X(PortSerialData, 0xC8) \
-    X(PortSerialCtl,  0xD8) \
-    X(PortKeyIn,      0xE8) \
-    X(PortLcdCmd,     0xFE) \
-    X(PortLcdData,    0xFF) \
+    X(PortExtVidA,    0x70,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
+    X(PortExtVidB,    0x71,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
+    X(PortExtVidC,    0x72,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
+    X(PortExtVidCmd,  0x73,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
+    X(PortRom128KHi,  0x80,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
+    X(PortRom128KLo,  0x84,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
+    X(PortRom128KMid, 0x88,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
+    X(PortRom128KRead,0x8C,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
+    X(PortIoCtl,      0x90,    SerSelH,    SerSelL,  PrintStrb, ClkCmdStrb,  CasMotCtl,         x2,         x1,         x0 ) \
+    X(PortBankStatus, 0xA0,  StSerSelH,  StSerSelL,         x5,         x4,    StHADR2,    StHADR1,    StLADR2,    StLADR1 ) \
+    X(PortBankSel,    0xA1,         x7,         x6,         x5,         x4,      HADR2,      HADR1,      LADR2,      LADR1 ) \
+    X(Port81C55Cmd,   0xB8,  TimerCmdH,  TimerCmdL,         x5,         x4,         x3,         x2,         x1,         x0 ) \
+    X(Port81C55A,     0xB9,         A7,         A6,         A5,         A4,         A3,         A2,         A1,         A0 ) \
+    X(Port81C55B,     0xBA,     notRTS,     notDTR,       Bell,  AutPwrOff,   DcdRdSel,  MelodyCtl,    LcdDrv9,    LcdDrv8 ) \
+    X(Port81C55C,     0xBB,         x7,         x6,     notDsr,     notCts,   BcrInput,  PrintBusy,     Select,   ClkInput ) \
+    X(PortTimerLow,   0xBC,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
+    X(PortTimerHigh,  0xBD,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
+    X(PortUartData,   0xC8,  UartData7,  UartData6,  UartData5,  UartData4,  UartData3,  UartData2,  UartData1,  UartData0 ) \
+    X(PortUartCtl,    0xD8,         x7,         x6,         x5, CalLenSelH, CalLenSelL, ParityInhb, OddEvenPar, StopBitSel ) \
+    X(PortKeyIn,      0xE8,   KeyData7,   KeyData6,   KeyData5,   KeyData4,   KeyData3,   KeyData2,   KeyData1,   KeyData0 ) \
+    X(PortLcdCmd,     0xFE,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
+    X(PortLcdData,    0xFF,   LcdData7,   LcdData6,   LcdData5,   LcdData4,   LcdData3,   LcdData2,   LcdData1,   LcdData0 ) \
     /*end*/
 
 typedef enum {
-#define X(name, val) name = val,
+#define X(name, val, ...) name = val,
     PC8201_PORTS(X)
 #undef X
 } Pc8201Port;
+
+typedef enum {
+#define X(name, val, b0, b1, b2, b3, b4, b5, b6, b7) \
+    name##0 = (val << 3) | 0, name##_##b0 = name##0, \
+    name##1 = (val << 3) | 1, name##_##b1 = name##1, \
+    name##2 = (val << 3) | 2, name##_##b2 = name##2, \
+    name##3 = (val << 3) | 3, name##_##b3 = name##3, \
+    name##4 = (val << 3) | 4, name##_##b4 = name##4, \
+    name##5 = (val << 3) | 5, name##_##b5 = name##5, \
+    name##6 = (val << 3) | 6, name##_##b6 = name##6, \
+    name##7 = (val << 3) | 7, name##_##b7 = name##7,
+    PC8201_PORTS(X)
+#undef X
+} Pc8201PortBits;
 
 typedef struct {
     uint8_t bytes[50][4];
@@ -215,10 +229,10 @@ void clock_command(Ic_Clock *clock, Ic_Clock_Command command, bool shift_on, uin
     (void)data_bit;
 
     switch (command) {
-    case CLOCK_CMD_REGISTER_HOLD:         /*printf("TODO:CLOCK_CMD_REGISTER_HOLD\n");*/ break;
-    case CLOCK_CMD_REGISTER_SHIFT:        /*printf("TODO:CLOCK_CMD_REGISTER_SHIFT\n");*/ break;
-    case CLOCK_CMD_TIME_SET_COUNTER_HOLD: /*printf("TODO:CLOCK_CMD_TIME_SET_COUNTER_HOLD\n");*/ break;
-    case CLOCK_CMD_TIME_READ:             /*printf("TODO:CLOCK_CMD_TIME_READ\n");*/ break;
+    case CLOCK_CMD_REGISTER_HOLD:         printf("TODO:CLOCK_CMD_REGISTER_HOLD\n"); break;
+    case CLOCK_CMD_REGISTER_SHIFT:        printf("TODO:CLOCK_CMD_REGISTER_SHIFT\n"); break;
+    case CLOCK_CMD_TIME_SET_COUNTER_HOLD: printf("TODO:CLOCK_CMD_TIME_SET_COUNTER_HOLD\n"); break;
+    case CLOCK_CMD_TIME_READ:             printf("TODO:CLOCK_CMD_TIME_READ\n"); break;
     case CLOCK_CMD_FREQ_64:               clock->time_interval_ns = FREQ_PERIOD_NS(64); break;
     case CLOCK_CMD_FREQ_256:              clock->time_interval_ns = FREQ_PERIOD_NS(256); break;
     case CLOCK_CMD_FREQ_2048:             clock->time_interval_ns = FREQ_PERIOD_NS(2048); break;
@@ -228,15 +242,15 @@ void clock_command(Ic_Clock *clock, Ic_Clock_Command command, bool shift_on, uin
 
 
 #define AUDIO_SAMPLE_BUFFER_SIZE      1024
-#define AUDIO_SAMPLE_RATE      22050
-#define AUIDO_SAMPLE_PERIOD_NS FREQ_PERIOD_NS(AUDIO_SAMPLE_RATE)
+#define AUDIO_SAMPLE_RATE             22050
+#define AUIDO_SAMPLE_PERIOD_NS        FREQ_PERIOD_NS(AUDIO_SAMPLE_RATE)
 
 typedef struct {
+    uint64_t time_next_sample_ns;
     float sample_buffer[AUDIO_SAMPLE_BUFFER_SIZE];
-    uint64_t write_index;
-    uint64_t read_index;
-
-    uint64_t time_last_sample_ns;
+    uint32_t sample_count;
+    bool buzzer_on;
+    bool silence_tone;
 } Audio;
 
 typedef struct {
@@ -264,8 +278,6 @@ typedef struct {
     bool clock_command_strobe;
     bool printer_strobe;
     SerialInterfaceSelection serial_interface_selection;
-
-    bool buzzer_on;
 
     // Debugger support
     BreakPointKind breakpoints[65536];
@@ -310,10 +322,27 @@ void update_canvas_buffer(Pc8201Machine* mach) {
 
 static const char* string_from_port(uint8_t port) {
     switch (port) {
-#define X(name, val) case val: return #name;
+#define X(name, val, ...) case val: return #name;
         PC8201_PORTS(X)
 #undef X
         default: return "UnknownPort";
+    }
+}
+
+static const char *string_from_port_bit(uint8_t port, uint8_t bit) {
+    switch (((uint16_t)port << 3) | bit) {
+#define X(name, val, b0, b1, b2, b3, b4, b5, b6, b7) \
+        case ((uint16_t)val << 3)|0: return #b0; \
+        case ((uint16_t)val << 3)|1: return #b1; \
+        case ((uint16_t)val << 3)|2: return #b2; \
+        case ((uint16_t)val << 3)|3: return #b3; \
+        case ((uint16_t)val << 3)|4: return #b4; \
+        case ((uint16_t)val << 3)|5: return #b5; \
+        case ((uint16_t)val << 3)|6: return #b6; \
+        case ((uint16_t)val << 3)|7: return #b7; \
+        /*end*/
+    PC8201_PORTS(X)
+        default: return "UnknownPortBit";
     }
 }
 
@@ -338,31 +367,23 @@ static void loop_cb(Vm_8085 *vm) {
     mach->time_ns = mach->cpu.total_t_states * mach->clock_period_ns;
 
     // Calculate time from total_t_states
-{
-    static float phase = 0.0f;
-    const float two_pi = 6.28318530718f;
-    const float phase_step =
-        two_pi * 440.0f / (float)AUDIO_SAMPLE_RATE;
+    for (; mach->audio.time_next_sample_ns < mach->time_ns && mach->audio.sample_count < AUDIO_SAMPLE_BUFFER_SIZE
+         ; mach->audio.time_next_sample_ns += AUIDO_SAMPLE_PERIOD_NS)
+    {
+        static float phase = 0.0f;
+        float sample_value = mach->audio.buzzer_on ? 1.0f : 0.0f;
 
-    uint64_t elapsed_ns_since_last_sample =
-        mach->time_ns - mach->audio.time_last_sample_ns;
-    uint64_t n =
-        elapsed_ns_since_last_sample / AUIDO_SAMPLE_PERIOD_NS;
+        if (mach->timer.target_count > 0 && (mach->audio.buzzer_on || !mach->audio.silence_tone)) {
+            float frequency = 1e9 / (mach->timer.target_count * mach->clock_period_ns);
+            float phase_step = frequency / (float)AUDIO_SAMPLE_RATE;
 
-    for (uint64_t i = 0; i < n; ++i) {
-        mach->audio.sample_buffer[mach->audio.write_index] =
-            0.2f * sinf(phase);
+            // Generate square wave from timer frequency
+            phase = fmodf(phase + phase_step, 1.0f);
+            sample_value = (phase > 0.5f ? 1.0f : 0.0f);
+        }
 
-        phase += phase_step;
-        if (phase >= two_pi)
-            phase -= two_pi;
-
-        if (++mach->audio.write_index >= AUDIO_SAMPLE_BUFFER_SIZE)
-            mach->audio.write_index = 0;
+        mach->audio.sample_buffer[mach->audio.sample_count++] = sample_value * 0.2f;
     }
-
-    mach->audio.time_last_sample_ns += n * AUIDO_SAMPLE_PERIOD_NS;
-}
 
     while (mach->cpu.total_t_states >= mach->timer.time_next_period) {
         uint64_t t = mach->cpu.total_t_states - mach->timer.time_next_period;
@@ -391,10 +412,18 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     Pc8201Machine *mach = (Pc8201Machine *)vm->user_data;
     Pc8201Lcd *lcd = &mach->lcd;
     uint8_t data = is_write ? *in_out_data : 0;
-    uint8_t data_prev = mach->ports_prev[port];
-    if (!is_write) *in_out_data = data_prev;
 
-    bool handled = false;
+    uint8_t handled = 0;
+    enum {
+        B0 = 0x01,
+        B1 = 0x02,
+        B2 = 0x04,
+        B3 = 0x08,
+        B4 = 0x10,
+        B5 = 0x20,
+        B6 = 0x40,
+        B7 = 0x80,
+    };
 
     switch (port) {
 
@@ -431,7 +460,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
             mach->clock_command_strobe       = !!(data & (1 << 4));
             mach->printer_strobe             = !!(data & (1 << 5));
             mach->serial_interface_selection = (data >> 6) & 0x3;
-            handled = true;
+            handled =  B7 | B6 | B5 | B4 | B3 | !B2 | !B1 | !B0;
         }
         else {
 
@@ -479,10 +508,40 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
         if (is_write) {
             mach->key.strobe_b = data; // Track keyboard strobe (PB0)
 
+            // LCD driver select lines (PB1 ~ PB0)[cite: 1]
             lcd->driver_select &= 0x00ff;
             lcd->driver_select |= (data & 0x3) << 8;
 
-            mach->buzzer_on = !!(data & (1 << 5));
+            // // Bit 2: MELODY CONTROL OUTPUT (MC) - 0 = On, 1 = Off[cite: 1]
+            mach->audio.silence_tone = (data & (1 << 2)) != 0;
+
+            // // Bit 5: BUZZER OUTPUT (BELL) - 0 = Ring, 1 = Not Ring[cite: 1]
+            mach->audio.buzzer_on = (data & (1 << 5)) != 0;
+
+            // mach->audio.melody_control_output = (data & (1 << 2)) == 0; // active low
+
+            // // Bit 3: DCD/RD SELECT OF RS-232C - 0 = Ring Detect, 1 = Data Carrier Detect[cite: 1]
+            // // mach->dcd_rd_select = (data & (1 << 3)) != 0;
+
+            // // Bit 4: AUTO POWER OFF OUTPUT (APO) - 0 = Output Off, 1 = Output On[cite: 1]
+            // // mach->auto_power_off = (data & (1 << 4)) != 0;
+
+            // mach->audio.buzzer_on = (data & (1 << 5)) == 0;
+
+            // Bits 6 & 7: RS-232C DTR and RTS (Active Low)[cite: 1]
+            // bool dtr_active = (data & (1 << 6)) == 0;
+            // bool rts_active = (data & (1 << 7)) == 0;
+
+            // // Apply serial signal changes
+            // uint8_t ser_flags = 0;
+            // if (dtr_active) ser_flags |= SER_SIGNAL_DTR;
+            // if (rts_active) ser_flags |= SER_SIGNAL_RTS;
+            // ser_set_signals(ser_flags);
+
+            // Handle Auto Power Off change if needed
+            // if (!mach->auto_power_off) {
+            //     // power_down();
+            // }
         }
         else /* read */ {
             *in_out_data = (lcd->driver_select >> 8) & 0x3;
@@ -505,18 +564,20 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
     case Port81C55Cmd: {
         if (is_write) {
+
+            mach->audio.silence_tone = true;
             // TODO
+            // mach->ports_prev[Port81C55Cmd] = data;
+            handled = true;
         }
         else /* read */ {
-            *in_out_data = 0x89;
-            handled = true;
+            // *in_out_data = mach->ports_prev[Port81C55Cmd];
         }
     } break;
 
     case PortTimerLow: {
         if (is_write) {
-            mach->timer.target_count &= 0xff00;
-            mach->timer.target_count |= data;
+            mach->timer.target_count = (mach->timer.target_count & 0xff00) | data;
             handled = true;
         }
         else /* read */ {
@@ -526,9 +587,10 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
     case PortTimerHigh: {
         if (is_write) {
-            mach->timer.target_count &= 0xC0ff;
-            mach->timer.target_count |= (((uint16_t)(data & 0x3f)) << 8);
+            mach->timer.target_count = (mach->timer.target_count & 0xff) | (((uint16_t)(data & 0x3f)) << 8);
             mach->timer.mode = (data >> 6) & 3;
+
+            printf("TIMER: frequency: % .2f\n", 1e9f / (mach->timer.target_count * mach->clock_period_ns));
             handled = true;
         }
         else /* read */ {
@@ -641,7 +703,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
             }
 
             *in_out_data = result;
-            handled = true;
+            handled = 255;
         }
     } break;
 
@@ -659,11 +721,20 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     ((byte) & 0x02 ? '1' : '0'), \
     ((byte) & 0x01 ? '1' : '0')
 
-    if (!handled) {
+    if (handled != 0xFF) {
         const char *portstr = string_from_port(port);
         uint64_t t = mach->cpu.total_t_states;
         if (!is_write) data = *in_out_data;
         fprintf(stderr, "@: %04X T: %"PRIu64" - IO %s port %02X (%15.20s), value = %02x ("BINPAT");\n", mach->cpu.pc, t, is_write ? "WRITE" : "READ ", port, portstr, data, BYTE_TO_BIN(data));
+
+        if (is_write) {
+            for (int i = 0; i < 8; ++i)
+            {
+                if (handled & (1 << i)) continue;
+                fprintf(stderr, " %s ", string_from_port_bit(port, (uint8_t)i));
+            }
+            fprintf(stderr, "\n");
+        }
     }
 
     return handled;
@@ -1150,39 +1221,16 @@ GLuint compile_shader(GLenum type, const char* src) {
 
 static void update_audio(Pc8201Machine *mach, SDL_AudioStream *stream)
 {
-    enum { CHUNK_SAMPLES = 128, TARGET_SAMPLES = 512 };
+    if (mach->audio.sample_count != AUDIO_SAMPLE_BUFFER_SIZE) return;
 
-    int queued_bytes = SDL_GetAudioStreamQueued(stream);
-    if (queued_bytes < 0) return;
+    size_t byte_count = AUDIO_SAMPLE_BUFFER_SIZE * sizeof(mach->audio.sample_buffer[0]);
 
-    const int target_bytes = TARGET_SAMPLES * (int)sizeof(float);
-    const uint64_t size = AUDIO_SAMPLE_BUFFER_SIZE;
-    uint64_t available =
-        (mach->audio.write_index + size - mach->audio.read_index) % size;
 
-    while (available >= CHUNK_SAMPLES && queued_bytes < target_bytes) {
-        uint64_t count = CHUNK_SAMPLES;
-        uint64_t contiguous = size - mach->audio.read_index;
-        uint64_t room = (uint64_t)(target_bytes - queued_bytes) / sizeof(float);
-
-        if (count > contiguous) count = contiguous;
-        if (count > available) count = available;
-        if (count > room) count = room;
-        if (count == 0) break;
-
-        int bytes = (int)(count * sizeof(float));
-        if (!SDL_PutAudioStreamData(
-                stream,
-                mach->audio.sample_buffer + mach->audio.read_index,
-                bytes)) {
-            fprintf(stderr, "SDL_PutAudioStreamData: %s\n", SDL_GetError());
-            return;
-        }
-
-        mach->audio.read_index = (mach->audio.read_index + count) % size;
-        available -= count;
-        queued_bytes += bytes;
+    if (!SDL_PutAudioStreamData(stream, mach->audio.sample_buffer, byte_count)) {
+        fprintf(stderr, "SDL_PutAudioStreamData: %s\n", SDL_GetError());
     }
+
+    mach->audio.sample_count = 0;
 }
 
 uint8_t *read_entire_file(const char *path, size_t *out_size) {
