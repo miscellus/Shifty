@@ -24,41 +24,49 @@
 #else
 #define DECL_EXPORT
 #endif
+enum {
+    RD = 1 << 0,
+    WR = 1 << 1,
+    RW = RD | WR
+};
 
-
+// NOTE(jkk):
+// X(Name, Address, Direction, b7, b6, b5, b4, b3, b2, b1, b0)
 #define PC8201_PORTS(X) \
-    X(PortExtVidA,    0x70,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
-    X(PortExtVidB,    0x71,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
-    X(PortExtVidC,    0x72,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
-    X(PortExtVidCmd,  0x73,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
-    X(PortRom128KHi,  0x80,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
-    X(PortRom128KLo,  0x84,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
-    X(PortRom128KMid, 0x88,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
-    X(PortRom128KRead,0x8C,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
-    X(PortIoCtl,      0x90,    SerSelH,    SerSelL,  PrintStrb, ClkCmdStrb,  CasMotCtl,         x2,         x1,         x0 ) \
-    X(PortBankStatus, 0xA0,  StSerSelH,  StSerSelL,         x5,         x4,    StHADR2,    StHADR1,    StLADR2,    StLADR1 ) \
-    X(PortBankSel,    0xA1,         x7,         x6,         x5,         x4,      HADR2,      HADR1,      LADR2,      LADR1 ) \
-    X(Port81C55Cmd,   0xB8,  TimerCmdH,  TimerCmdL,         x5,         x4,         x3,         x2,         x1,         x0 ) \
-    X(Port81C55A,     0xB9,         A7,         A6,         A5,         A4,         A3,         A2,         A1,         A0 ) \
-    X(Port81C55B,     0xBA,     notRTS,     notDTR,       Bell,  AutPwrOff,   DcdRdSel,  MelodyCtl,    LcdDrv9,    LcdDrv8 ) \
-    X(Port81C55C,     0xBB,         x7,         x6,     notDsr,     notCts,   BcrInput,  PrintBusy,     Select,   ClkInput ) \
-    X(PortTimerLow,   0xBC,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
-    X(PortTimerHigh,  0xBD,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
-    X(PortUartData,   0xC8,  UartData7,  UartData6,  UartData5,  UartData4,  UartData3,  UartData2,  UartData1,  UartData0 ) \
-    X(PortUartCtl,    0xD8,         x7,         x6,         x5, CalLenSelH, CalLenSelL, ParityInhb, OddEvenPar, StopBitSel ) \
-    X(PortKeyIn,      0xE8,   KeyData7,   KeyData6,   KeyData5,   KeyData4,   KeyData3,   KeyData2,   KeyData1,   KeyData0 ) \
-    X(PortLcdCmd,     0xFE,         x7,         x6,         x5,         x4,         x3,         x2,         x1,         x0 ) \
-    X(PortLcdData,    0xFF,   LcdData7,   LcdData6,   LcdData5,   LcdData4,   LcdData3,   LcdData2,   LcdData1,   LcdData0 ) \
+    X(PortExtVidA,    0x70, RD|WR, x7,         x6,        x5,        x4,         x3,         x2,        x1,        x0       ) \
+    X(PortExtVidB,    0x71, RD|WR, x7,         x6,        x5,        x4,         x3,         x2,        x1,        x0       ) \
+    X(PortExtVidC,    0x72, RD|WR, x7,         x6,        x5,        x4,         x3,         x2,        x1,        x0       ) \
+    X(PortExtVidCmd,  0x73, RD|WR, x7,         x6,        x5,        x4,         x3,         x2,        x1,        x0       ) \
+    X(PortRom128KHi,  0x80, RD|WR, x7,         x6,        x5,        x4,         x3,         x2,        x1,        x0       ) \
+    X(PortRom128KLo,  0x84, RD|WR, x7,         x6,        x5,        x4,         x3,         x2,        x1,        x0       ) \
+    X(PortRom128KMid, 0x88, RD|WR, x7,         x6,        x5,        x4,         x3,         x2,        x1,        x0       ) \
+    X(PortRom128KRead,0x8C, RD|WR, x7,         x6,        x5,        x4,         x3,         x2,        x1,        x0       ) \
+    X(PortSystemCtl,  0x90,    WR, SerSelH,    SerSelL,   PrintStrb, ClkCmdStrb, CasMotCtl,  x2,        x1,        x0       ) \
+    X(PortBankStat,   0xA0, RD   , x7,         x6,        x5,        x4,         StHADR2,    StHADR1,   StLADR2,   StLADR1  ) \
+    X(PortBankSel,    0xA1,    WR, x7,         x6,        x5,        x4,         HADR2,      HADR1,     LADR2,     LADR1    ) \
+    X(Port81C55Cmd,   0xB8,    WR, TmrCmd1,    TmrCmd0,   PortCCmd1, PortCCmd0,  PortBIntE,  PortAIntE, PortBMode, PortAMode) \
+    X(Port81C55Stat,  0xB8, RD   , TmrIntr,    TmrRun,    PortCIntr, PortBIntr,  PortAIntr,  PortCIntE, PortBIntE, PortAIntE) \
+    X(Port81C55A,     0xB9, RD|WR, A7,         A6,        A5,        A4,         A3,         A2,        A1,        A0       ) \
+    X(Port81C55B,     0xBA, RD|WR, notRTS,     notDTR,    Bell,      AutPwrOff,  DcdRdSel,   MelodyCtl, LcdDrv9,   LcdDrv8  ) \
+    X(Port81C55C,     0xBB, RD   , x7,         x6,        notDsr,    notCts,     BcrInput,   PrintBusy, Select,    ClkInput ) \
+    X(PortTimerLow,   0xBC, RD|WR, TimerL7,    TimerL6,   TimerL5,   TimerL4,    TimerL3,    TimerL2,   TimerL1,   TimerL0  ) \
+    X(PortTimerHigh,  0xBD, RD|WR, TimerMode1, TimerMode0,TimerH5,   TimerH4,    TimerH3,    TimerH2,   TimerH1,   TimerH0  ) \
+    X(PortUartData,   0xC8, RD|WR, UartData7,  UartData6, UartData5, UartData4,  UartData3,  UartData2, UartData1, UartData0  ) \
+    X(PortUartCmd,    0xD8,    WR, x7,         x6,        x5,        CalLenSelH, CalLenSelL, ParityInhb,OddEvenPar,StopBitSel) \
+    X(PortUartStat,   0xD8, RD   , LowPower,   x6,        x5,        TxBufEmpty, ParityErr,  FrameErr,  OverrunErr,DcdRd    ) \
+    X(PortKeyIn,      0xE8, RD   , KeyData7,   KeyData6,  KeyData5,  KeyData4,   KeyData3,   KeyData2,  KeyData1,  KeyData0 ) \
+    X(PortLcdCmd,     0xFE, RD|WR, x7,         x6,        x5,        x4,         x3,         x2,        x1,        x0       ) \
+    X(PortLcdData,    0xFF, RD|WR, LcdData7,   LcdData6,  LcdData5,  LcdData4,   LcdData3,   LcdData2,  LcdData1,  LcdData0 ) \
     /*end*/
 
 typedef enum {
-#define X(name, val, ...) name = val,
+#define X(name, val, dir, ...) name = val,
     PC8201_PORTS(X)
 #undef X
 } Pc8201Port;
 
 typedef enum {
-#define X(name, val, b0, b1, b2, b3, b4, b5, b6, b7) \
+#define X(name, val, dir, b0, b1, b2, b3, b4, b5, b6, b7) \
     name##0 = (val << 3) | 0, name##_##b0 = name##0, \
     name##1 = (val << 3) | 1, name##_##b1 = name##1, \
     name##2 = (val << 3) | 2, name##_##b2 = name##2, \
@@ -161,7 +169,7 @@ static void memory_bank_set(Memory *mem, uint8_t data) {
 
     switch (hadr) {
         case 0:  mem->pages[1] = (MemPage){mem->ram_banks[0], true}; break;
-        case 1:  mem->pages[1] = (MemPage){mem->ram_banks[0], true}; break; // HADR = 1 ("NOT USED")
+        case 1:  break; // HADR = 1 ("NOT USED")
         case 2:  mem->pages[1] = (MemPage){mem->ram_banks[1], true}; break;
         case 3:  mem->pages[1] = (MemPage){mem->ram_banks[2], true}; break;
     }
@@ -176,6 +184,9 @@ static inline void memory_write(Memory *mem, uint16_t address, uint8_t data) {
     uint8_t idx = address >> 15;
     if (mem->pages[idx].writeable) {
         mem->pages[idx].base[address & 0x7FFF] = data;
+    }
+    else {
+        assert(!"Invalid code path");
     }
 }
 
@@ -320,30 +331,31 @@ void update_canvas_buffer(Pc8201Machine* mach) {
     }
 }
 
-static const char* string_from_port(uint8_t port) {
-    switch (port) {
-#define X(name, val, ...) case val: return #name;
+static const char* string_from_port(uint8_t port, uint8_t dir) {
+    switch ((port << 2) | dir) {
+#define X(NAME, VAL, DIR, ...) case ((VAL) << 2) | (DIR): return #NAME;
         PC8201_PORTS(X)
 #undef X
         default: return "UnknownPort";
     }
 }
 
-static const char *string_from_port_bit(uint8_t port, uint8_t bit) {
-    switch (((uint16_t)port << 3) | bit) {
-#define X(name, val, b0, b1, b2, b3, b4, b5, b6, b7) \
-        case ((uint16_t)val << 3)|0: return #b0; \
-        case ((uint16_t)val << 3)|1: return #b1; \
-        case ((uint16_t)val << 3)|2: return #b2; \
-        case ((uint16_t)val << 3)|3: return #b3; \
-        case ((uint16_t)val << 3)|4: return #b4; \
-        case ((uint16_t)val << 3)|5: return #b5; \
-        case ((uint16_t)val << 3)|6: return #b6; \
-        case ((uint16_t)val << 3)|7: return #b7; \
-        /*end*/
+static const char *string_from_port_bit(uint8_t port, uint8_t bit, uint8_t dir) {
+    uint16_t v = ((uint16_t)port << 3) | bit;
+
+#define X(NAME, VAL, DIR, B0, B1, B2, B3, B4, B5, B6, B7) \
+    if (v == (((VAL) << 3) | 0) && dir & (DIR)) return #B0; \
+    if (v == (((VAL) << 3) | 1) && dir & (DIR)) return #B1; \
+    if (v == (((VAL) << 3) | 2) && dir & (DIR)) return #B2; \
+    if (v == (((VAL) << 3) | 3) && dir & (DIR)) return #B3; \
+    if (v == (((VAL) << 3) | 4) && dir & (DIR)) return #B4; \
+    if (v == (((VAL) << 3) | 5) && dir & (DIR)) return #B5; \
+    if (v == (((VAL) << 3) | 6) && dir & (DIR)) return #B6; \
+    if (v == (((VAL) << 3) | 7) && dir & (DIR)) return #B7; \
+    /*end*/
     PC8201_PORTS(X)
-        default: return "UnknownPortBit";
-    }
+
+    return "UnknownPortBit";
 }
 
 static void mem_cb(Vm_8085 *vm, uint16_t addr, bool is_write, uint8_t *in_out_data)
@@ -427,7 +439,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
 
     switch (port) {
 
-    case PortIoCtl: {
+    case PortSystemCtl: {
 
         // TODO(jkk):
         // Reading/writing data with CMT is done via SID Pin ,SOD Pin of
@@ -467,7 +479,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
         }
     } break;
 
-    case PortBankStatus: { // 0xA0
+    case PortBankStat: { // 0xA0
         if (is_write) {
 
         }
@@ -478,15 +490,15 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
                 (mach->mem.high_address_select << 2) |
                 (mach->serial_interface_selection << 6));
 
-            handled = true;
+            handled = B7 | B6 | !B5 | !B6 | B3 | B2 | B1 | B0;
         }
     } break;
 
     case PortBankSel: { // 0xA1
         if (is_write) {
             memory_bank_set(&mach->mem, data);
+            handled = 255;
         }
-        handled = true;
     } break;
 
     case Port81C55A: {
@@ -722,19 +734,19 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     ((byte) & 0x01 ? '1' : '0')
 
     if (handled != 0xFF) {
-        const char *portstr = string_from_port(port);
+
+        uint8_t dir = is_write?2:1;
+        const char *portstr = string_from_port(port, dir);
         uint64_t t = mach->cpu.total_t_states;
         if (!is_write) data = *in_out_data;
         fprintf(stderr, "@: %04X T: %"PRIu64" - IO %s port %02X (%15.20s), value = %02x ("BINPAT");\n", mach->cpu.pc, t, is_write ? "WRITE" : "READ ", port, portstr, data, BYTE_TO_BIN(data));
 
-        if (is_write) {
-            for (int i = 0; i < 8; ++i)
-            {
-                if (handled & (1 << i)) continue;
-                fprintf(stderr, " %s ", string_from_port_bit(port, (uint8_t)i));
-            }
-            fprintf(stderr, "\n");
+        for (int i = 0; i < 8; ++i)
+        {
+            if (handled & (1 << i)) continue;
+            fprintf(stderr, " %s ", string_from_port_bit(port, (uint8_t)i, dir));
         }
+        fprintf(stderr, "\n");
     }
 
     return handled;
