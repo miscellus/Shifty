@@ -175,22 +175,6 @@ static void memory_bank_set(Memory *mem, uint8_t data) {
     }
 }
 
-static inline uint8_t memory_read(Memory *mem, uint16_t address) {
-    uint8_t idx = address >> 15;
-    return mem->pages[idx].base[address & 0x7FFF];
-}
-
-static inline void memory_write(Memory *mem, uint16_t address, uint8_t data) {
-    uint8_t idx = address >> 15;
-    if (mem->pages[idx].writeable) {
-        mem->pages[idx].base[address & 0x7FFF] = data;
-    }
-    else {
-        assert(!"Invalid code path");
-    }
-}
-
-
 enum { MAX_TIMER_COUNT = (1 << 14) - 1 };
 typedef enum {
     TIMER_SINGLE_SQUARE = 0,   // ceil(count/2) ticks HIGH, then floor(count/2) ticks LOW, not repeated
@@ -240,10 +224,10 @@ void clock_command(Ic_Clock *clock, Ic_Clock_Command command, bool shift_on, uin
     (void)data_bit;
 
     switch (command) {
-    case CLOCK_CMD_REGISTER_HOLD:         printf("TODO:CLOCK_CMD_REGISTER_HOLD\n"); break;
-    case CLOCK_CMD_REGISTER_SHIFT:        printf("TODO:CLOCK_CMD_REGISTER_SHIFT\n"); break;
-    case CLOCK_CMD_TIME_SET_COUNTER_HOLD: printf("TODO:CLOCK_CMD_TIME_SET_COUNTER_HOLD\n"); break;
-    case CLOCK_CMD_TIME_READ:             printf("TODO:CLOCK_CMD_TIME_READ\n"); break;
+    case CLOCK_CMD_REGISTER_HOLD:         /*printf*/(void)("TODO:CLOCK_CMD_REGISTER_HOLD\n"); break;
+    case CLOCK_CMD_REGISTER_SHIFT:        /*printf*/(void)("TODO:CLOCK_CMD_REGISTER_SHIFT\n"); break;
+    case CLOCK_CMD_TIME_SET_COUNTER_HOLD: /*printf*/(void)("TODO:CLOCK_CMD_TIME_SET_COUNTER_HOLD\n"); break;
+    case CLOCK_CMD_TIME_READ:             /*printf*/(void)("TODO:CLOCK_CMD_TIME_READ\n"); break;
     case CLOCK_CMD_FREQ_64:               clock->time_interval_ns = FREQ_PERIOD_NS(64); break;
     case CLOCK_CMD_FREQ_256:              clock->time_interval_ns = FREQ_PERIOD_NS(256); break;
     case CLOCK_CMD_FREQ_2048:             clock->time_interval_ns = FREQ_PERIOD_NS(2048); break;
@@ -260,8 +244,9 @@ typedef struct {
     uint64_t time_next_sample_ns;
     float sample_buffer[AUDIO_SAMPLE_BUFFER_SIZE];
     uint32_t sample_count;
-    bool buzzer_on;
-    bool silence_tone;
+
+    bool PB5;
+    bool PB2;
 } Audio;
 
 typedef struct {
@@ -298,6 +283,21 @@ typedef struct {
 // Globally instantiate our machine state
 static Pc8201Machine machine;
 
+static inline uint8_t memory_read(Memory *mem, uint16_t address) {
+    uint8_t idx = address >> 15;
+    return mem->pages[idx].base[address & 0x7FFF];
+}
+
+static inline void memory_write(Memory *mem, uint16_t address, uint8_t data) {
+    uint8_t idx = address >> 15;
+    if (mem->pages[idx].writeable) {
+        mem->pages[idx].base[address & 0x7FFF] = data;
+    }
+    else {
+        printf("!!!! [%#04x] = %#02x (PC = %#04x)\n", address, data, machine.cpu.pc);
+    }
+}
+
 void update_canvas_buffer(Pc8201Machine* mach) {
     Pc8201Lcd lcd = mach->lcd;
     uint32_t *canvas = mach->canvas;
@@ -332,26 +332,22 @@ void update_canvas_buffer(Pc8201Machine* mach) {
 }
 
 static const char* string_from_port(uint8_t port, uint8_t dir) {
-    switch ((port << 2) | dir) {
-#define X(NAME, VAL, DIR, ...) case ((VAL) << 2) | (DIR): return #NAME;
+#define X(NAME, VAL, DIR, ...) if ((port == (VAL)) && (dir & (DIR))) return #NAME;
         PC8201_PORTS(X)
 #undef X
-        default: return "UnknownPort";
-    }
+    return "UnknownPort";
 }
 
 static const char *string_from_port_bit(uint8_t port, uint8_t bit, uint8_t dir) {
-    uint16_t v = ((uint16_t)port << 3) | bit;
-
 #define X(NAME, VAL, DIR, B0, B1, B2, B3, B4, B5, B6, B7) \
-    if (v == (((VAL) << 3) | 0) && dir & (DIR)) return #B0; \
-    if (v == (((VAL) << 3) | 1) && dir & (DIR)) return #B1; \
-    if (v == (((VAL) << 3) | 2) && dir & (DIR)) return #B2; \
-    if (v == (((VAL) << 3) | 3) && dir & (DIR)) return #B3; \
-    if (v == (((VAL) << 3) | 4) && dir & (DIR)) return #B4; \
-    if (v == (((VAL) << 3) | 5) && dir & (DIR)) return #B5; \
-    if (v == (((VAL) << 3) | 6) && dir & (DIR)) return #B6; \
-    if (v == (((VAL) << 3) | 7) && dir & (DIR)) return #B7; \
+    if ((port == (VAL)) && (dir & (DIR)) && (bit == 0)) return #B0; \
+    if ((port == (VAL)) && (dir & (DIR)) && (bit == 1)) return #B1; \
+    if ((port == (VAL)) && (dir & (DIR)) && (bit == 2)) return #B2; \
+    if ((port == (VAL)) && (dir & (DIR)) && (bit == 3)) return #B3; \
+    if ((port == (VAL)) && (dir & (DIR)) && (bit == 4)) return #B4; \
+    if ((port == (VAL)) && (dir & (DIR)) && (bit == 5)) return #B5; \
+    if ((port == (VAL)) && (dir & (DIR)) && (bit == 6)) return #B6; \
+    if ((port == (VAL)) && (dir & (DIR)) && (bit == 7)) return #B7; \
     /*end*/
     PC8201_PORTS(X)
 
@@ -383,15 +379,18 @@ static void loop_cb(Vm_8085 *vm) {
          ; mach->audio.time_next_sample_ns += AUIDO_SAMPLE_PERIOD_NS)
     {
         static float phase = 0.0f;
-        float sample_value = mach->audio.buzzer_on ? 1.0f : 0.0f;
 
-        if (mach->timer.target_count > 0 && (mach->audio.buzzer_on || !mach->audio.silence_tone)) {
-            float frequency = 1e9 / (mach->timer.target_count * mach->clock_period_ns);
-            float phase_step = frequency / (float)AUDIO_SAMPLE_RATE;
+        float sample_value = mach->audio.PB5 ? 1.0f : 0.0f;
 
-            // Generate square wave from timer frequency
-            phase = fmodf(phase + phase_step, 1.0f);
-            sample_value = (phase > 0.5f ? 1.0f : 0.0f);
+        if (mach->audio.PB5 && !mach->audio.PB2) {
+            if (mach->timer.target_count > 0) {
+                float frequency = 1e9 / (mach->timer.target_count * mach->clock_period_ns);
+                float phase_step = frequency / (float)AUDIO_SAMPLE_RATE;
+
+                // Generate square wave from timer frequency
+                phase = fmodf(phase + phase_step, 1.0f);
+                sample_value = (phase > 0.5f ? 1.0f : 0.0f);
+            }
         }
 
         mach->audio.sample_buffer[mach->audio.sample_count++] = sample_value * 0.2f;
@@ -497,7 +496,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     case PortBankSel: { // 0xA1
         if (is_write) {
             memory_bank_set(&mach->mem, data);
-            handled = 255;
+            handled =  B7 | B6 | B5 | B4 | B3 | B2 | B1 | B0;
         }
     } break;
 
@@ -512,8 +511,9 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
             bool shift_clock_on = !!((data >> 3) & 1);
             uint64_t data_bit = (data >> 4) & 1;
             clock_command(&mach->clock, cmd, shift_clock_on, data_bit);
+
+            handled = !B7 | !B6 | !B5 | B4 | B3 | B2 | B1 | B0;
         }
-        handled = true;
     } break;
  
     case Port81C55B: {
@@ -525,10 +525,20 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
             lcd->driver_select |= (data & 0x3) << 8;
 
             // // Bit 2: MELODY CONTROL OUTPUT (MC) - 0 = On, 1 = Off[cite: 1]
-            mach->audio.silence_tone = (data & (1 << 2)) != 0;
+            // mach->audio.silence_tone = (data & (1 << 2)) != 0;
+
+            bool new_pb2 = (data & (1 << 2)) != 0;
+            bool new_pb5 = (data & (1 << 5)) != 0;
+
+
+            mach->audio.PB2 = new_pb2;
+            mach->audio.PB5 = new_pb5;
 
             // // Bit 5: BUZZER OUTPUT (BELL) - 0 = Ring, 1 = Not Ring[cite: 1]
-            mach->audio.buzzer_on = (data & (1 << 5)) != 0;
+            // mach->audio.buzzer_on = (data & (1 << 5)) != 0;
+
+            handled = !B7 | !B6 | B5 | !B4 | !B3 | B2 | B1 | B0;
+
 
             // mach->audio.melody_control_output = (data & (1 << 2)) == 0; // active low
 
@@ -557,9 +567,10 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
         }
         else /* read */ {
             *in_out_data = (lcd->driver_select >> 8) & 0x3;
+
+            handled =  !B7 | !B6 | !B5 | !B4 | !B3 | !B2 | B1 | B0;
         }
 
-        handled = true;
     } break;
 
     case Port81C55C: {
@@ -570,17 +581,13 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
             // Clear Bit 2 (Printer Busy = 0, meaning ready)
             // Adjust other bits as needed for CTS/DSR/etc.
             *in_out_data = 0xF8;
-            handled = true;
+            handled =  B7 | B6 | B5 | B4 | B3 | !B2 | !B1 | !B0;
         }
     } break;
 
     case Port81C55Cmd: {
         if (is_write) {
 
-            mach->audio.silence_tone = true;
-            // TODO
-            // mach->ports_prev[Port81C55Cmd] = data;
-            handled = true;
         }
         else /* read */ {
             // *in_out_data = mach->ports_prev[Port81C55Cmd];
@@ -590,10 +597,11 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     case PortTimerLow: {
         if (is_write) {
             mach->timer.target_count = (mach->timer.target_count & 0xff00) | data;
-            handled = true;
+            handled =  B7 | B6 | B5 | B4 | B3 | B2 | B1 | B0;
         }
         else /* read */ {
-            // TODO
+            *in_out_data = mach->timer.target_count & 0xff;
+            handled =  B7 | B6 | B5 | B4 | B3 | B2 | B1 | B0;
         }
     } break;
 
@@ -603,10 +611,14 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
             mach->timer.mode = (data >> 6) & 3;
 
             printf("TIMER: frequency: % .2f\n", 1e9f / (mach->timer.target_count * mach->clock_period_ns));
-            handled = true;
+            handled = B7 | B6 | B5 | B4 | B3 | B2 | B1 | B0;
         }
         else /* read */ {
-            // TODO
+            *in_out_data = (
+                ((mach->timer.target_count >> 8) & 0x3f) |
+                ((mach->timer.mode & 3) << 6)
+            );
+            handled =  B7 | B6 | B5 | B4 | B3 | B2 | B1 | B0;
         }
     } break;
 
@@ -656,7 +668,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
             break;
         }
 
-        handled = true;
+        handled = B7 | B6 | B5 | B4 | B3 | B2 | B1 | B0;
     } break;
 
     case PortLcdData: {
@@ -689,7 +701,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
                     ? 0 : driv->offset + 1;
         }
 
-        handled = true;
+        handled = B7 | B6 | B5 | B4 | B3 | B2 | B1 | B0;
     } break;
 
     // Handle Keyboard Data Read (Port 0xE8)
@@ -715,7 +727,8 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
             }
 
             *in_out_data = result;
-            handled = 255;
+
+            handled = B7 | B6 | B5 | B4 | B3 | B2 | B1 | B0;
         }
     } break;
 
@@ -733,7 +746,7 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
     ((byte) & 0x02 ? '1' : '0'), \
     ((byte) & 0x01 ? '1' : '0')
 
-    if (handled != 0xFF) {
+    if (false && handled != 0xFF) {
 
         uint8_t dir = is_write?2:1;
         const char *portstr = string_from_port(port, dir);
@@ -744,12 +757,18 @@ static bool io_cb(Vm_8085 *vm, uint8_t port, bool is_write, uint8_t *in_out_data
         for (int i = 0; i < 8; ++i)
         {
             if (handled & (1 << i)) continue;
-            fprintf(stderr, " %s ", string_from_port_bit(port, (uint8_t)i, dir));
+            fprintf(stderr, "  %s\n", string_from_port_bit(port, (uint8_t)i, dir));
         }
-        fprintf(stderr, "\n");
     }
 
     return handled;
+}
+
+void serial_cb(Vm_8085 *vm, bool write, bool *in_out_bit)
+{
+    (void)vm;
+    (void)write;
+    (void)in_out_bit;
 }
 
 #ifdef TARGET_DESKTOP
@@ -1196,6 +1215,7 @@ const char* fragment_shader_src =
     X(PFNGLUNIFORM1IPROC,               Uniform1i) \
     X(PFNGLUNIFORM2FPROC,               Uniform2f) \
     X(PFNGLUNIFORM3FPROC,               Uniform3f) \
+    X(PFNGLUNIFORM4FPROC,               Uniform4f) \
     X(PFNGLACTIVETEXTUREPROC,           ActiveTexture) \
     /*end*/
 
@@ -1280,6 +1300,8 @@ uint8_t *read_entire_file(const char *path, size_t *out_size) {
 
     return data;
 }
+
+#include "sdl_debugger.c"
 
 #define arg_shift(argc, argv) ((argc) > 0 ? (--(argc), *(argv)++) : NULL)
 
@@ -1446,6 +1468,11 @@ int main(int argc, char* argv[]) {
     gl.Uniform3f(gl.GetUniformLocation(shaderProgram, "u_colorPixel"),   41.f/255.f,  42.0f/255.f,  40.f/255.f);
     gl.Uniform3f(gl.GetUniformLocation(shaderProgram, "u_colorShadow"), 129.f/255.f, 130.0f/255.f, 124.f/255.f);
 
+    MonoTextRenderer text_renderer = {0};
+    if (!init_mono_text(&text_renderer)) {
+        return 1;
+    }
+
     bool running = true;
     SDL_Event event;
 
@@ -1511,8 +1538,22 @@ int main(int argc, char* argv[]) {
         gl.BindVertexArray(VAO);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-        SDL_GL_SwapWindow(window);
-    }
+        // Switch back to full window for debug overlay text
+        glViewport(0, 0, window_w, window_h);
+
+        // Example source / debugger text in top-left corner
+        draw_mono_text(
+            &text_renderer,
+            "0100 ORG 08000H\n0101 LD A,01H\n0102 OUT (00H),A",
+            12.0f,
+            12.0f,
+            2.0f, // 16x16 px per character at scale 2.0
+            window_w,
+            window_h,
+            0.2f, 1.0f, 0.4f, 1.0f
+        );
+
+        SDL_GL_SwapWindow(window);    }
 
     // Cleanup
     SDL_GL_DestroyContext(gl_context);

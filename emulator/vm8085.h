@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,6 +13,7 @@ typedef struct Vm_8085 Vm_8085;
 typedef void (* Vm_8085_Memory_Cb)(Vm_8085 *vm, uint16_t address, bool write, uint8_t *in_out_data);
 typedef bool (* Vm_8085_Io_Cb)(Vm_8085* vm, uint8_t port, bool is_out, uint8_t *in_out_data);
 typedef void (* Vm_8085_Loop_Cb)(Vm_8085* vm);
+typedef void (* Vm_8085_Serial_Data_Cb)(Vm_8085 *vm, bool write, bool *in_out_bit);
 
 typedef struct {
     // All flags are boolean (0 or 1)
@@ -55,6 +57,7 @@ struct Vm_8085 {
     Vm_8085_Memory_Cb mem_cb;
     Vm_8085_Io_Cb io_cb;
     Vm_8085_Loop_Cb loop_cb;
+    Vm_8085_Serial_Data_Cb serial_cb;
     void* user_data;
 
     uint64_t total_t_states;
@@ -548,11 +551,9 @@ static void op_sim(Vm_8085 *vm) {
     // 3. Serial Output Enable (SOE)
     // If SOE (bit 6) is high, process the Serial Output Data (SOD, bit 7)
     if (a & 0x40) {
+        // Serial output data
         bool sod_bit = (a & 0x80) != 0;
-        (void)sod_bit;
-
-        // Example hook if you plan to support the SOD pin
-        // if (vm->serial_out_cb) vm->serial_out_cb(vm, sod_bit);
+        if (vm->serial_cb) vm->serial_cb(vm, true, &sod_bit);
     }
 }
 
@@ -589,6 +590,11 @@ static void op_rim(Vm_8085 *vm) {
 /* Main Core Cycle Hook                                                       */
 /* -------------------------------------------------------------------------- */
 
+#define SET_PC(V) do { \
+    uint16_t new_pc = (V); \
+    printf("PC = ...\n"); \
+    vm->pc = new_pc; \
+} while(0)
 
 // Define the hardware vectors for clarity
 #define VECTOR_TRAP  0x0024 // RST 4.5
@@ -625,7 +631,7 @@ static uint32_t service_interrupts(Vm_8085 *vm) {
         vm->halt = false;
 
         stack_push(vm, vm->pc);
-        vm->pc = VECTOR_RST75;
+        SET_PC(VECTOR_RST75);
         return 12;
     }
 
@@ -635,7 +641,7 @@ static uint32_t service_interrupts(Vm_8085 *vm) {
         vm->halt = false;
 
         stack_push(vm, vm->pc);
-        vm->pc = VECTOR_RST65;
+        SET_PC(VECTOR_RST65);
         return 12;
     }
 
@@ -645,7 +651,7 @@ static uint32_t service_interrupts(Vm_8085 *vm) {
         vm->halt = false;
 
         stack_push(vm, vm->pc);
-        vm->pc = VECTOR_RST55;
+        SET_PC(VECTOR_RST55);
         return 12;
     }
 
@@ -661,7 +667,7 @@ static uint32_t service_interrupts(Vm_8085 *vm) {
         // Handle standard 1-byte RST n instructions (e.g., 0xFF = RST 7)
         if ((vector_op & RST_OPCODE_MASK) == RST_BASE_OPCODE) {
             stack_push(vm, vm->pc);
-            vm->pc = (vector_op & RST_ADDR_MASK);
+            SET_PC((vector_op & RST_ADDR_MASK));
             return 12; // M1(INTA)=6, M2(MW)=3, M3(MW)=3
         }
 
@@ -676,11 +682,11 @@ static uint32_t service_interrupts(Vm_8085 *vm) {
             // OPTION A: Using a callback to the peripheral bus
             // uint8_t addr_lo = vm->inta_read_cb(vm);
             // uint8_t addr_hi = vm->inta_read_cb(vm);
-            // vm->pc = (addr_hi << 8) | addr_lo;
+            // SET_PC((addr_hi << 8) | addr_lo);
 
             // OPTION B: Assuming the peripheral pre-loaded the full 16-bit address
             // into the VM struct alongside the opcode (Fastest for WebAssembly)
-            vm->pc = vm->intr_call_address;
+            SET_PC(vm->intr_call_address);
 
             return 18; // M1(INTA)=6, M2(INTA)=3, M3(INTA)=3, M4(MW)=3, M5(MW)=3
         }
@@ -828,7 +834,7 @@ static uint32_t vm8085_step(Vm_8085 *vm) {
             switch (op.z) {
                 case G3_RET_COND:
                     if (check_condition(vm, op.cond)) {
-                        vm->pc = stack_pop_ret_addr(vm);
+                        SET_PC(stack_pop_ret_addr(vm));
                         t_states = 12;
                     } else {
                         t_states = 6;
@@ -840,8 +846,8 @@ static uint32_t vm8085_step(Vm_8085 *vm) {
                         t_states = 10;
                     } else {
                         switch (op.y) {
-                            case 1: vm->pc = stack_pop_ret_addr(vm); t_states = 10; break; // RET
-                            case 5: vm->pc = reg16_read(vm, RP_HL, false); t_states = 6; break; // PCHL
+                            case 1: SET_PC(stack_pop_ret_addr(vm)); t_states = 10; break; // RET
+                            case 5: SET_PC(reg16_read(vm, RP_HL, false)); t_states = 6; break; // PCHL
                             case 7: reg16_write(vm, RP_SP_PSW, reg16_read(vm, RP_HL, false), false); t_states = 6; break; // SPHL
                         }
                     }
@@ -850,7 +856,7 @@ static uint32_t vm8085_step(Vm_8085 *vm) {
                     {
                         uint16_t j_addr = fetch_word(vm);
                         if (check_condition(vm, op.cond)) {
-                            vm->pc = j_addr;
+                            SET_PC(j_addr);
                             t_states = 10;
                         } else {
                             t_states = 7;
@@ -859,7 +865,7 @@ static uint32_t vm8085_step(Vm_8085 *vm) {
                     break;
                 case G3_JMP_MISC:
                     switch (op.y) {
-                        case 0: vm->pc = fetch_word(vm); t_states = 10; break; // JMP
+                        case 0: SET_PC(fetch_word(vm)); t_states = 10; break; // JMP
                         case 2: { // OUT
                             uint8_t port = fetch_byte(vm);
                             io_write(vm, port, vm->a);
@@ -904,7 +910,7 @@ static uint32_t vm8085_step(Vm_8085 *vm) {
                         uint16_t c_addr = fetch_word(vm);
                         if (check_condition(vm, op.cond)) {
                             stack_push_ret_addr(vm, vm->pc);
-                            vm->pc = c_addr;
+                            SET_PC(c_addr);
                             t_states = 18;
                         } else {
                             t_states = 9;
@@ -918,7 +924,7 @@ static uint32_t vm8085_step(Vm_8085 *vm) {
                     } else if (op.y == 1) { // CALL
                         uint16_t call_addr = fetch_word(vm);
                         stack_push_ret_addr(vm, vm->pc);
-                        vm->pc = call_addr;
+                        SET_PC(call_addr);
                         t_states = 18;
                     }
                     break;
@@ -928,7 +934,7 @@ static uint32_t vm8085_step(Vm_8085 *vm) {
                     break;
                 case G3_RST:
                     stack_push(vm, vm->pc);
-                    vm->pc = op.y * 8;
+                    SET_PC(op.y * 8);
                     t_states = 12;
                     break;
             }
