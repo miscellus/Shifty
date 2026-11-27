@@ -7,5 +7,6 @@
 
 void write_listing(FILE *f, const struct asmstate *state, const struct line *lines);
 void write_json_debugger_file(FILE *f, const struct asmstate *state, const struct line *lines);
+bool write_bin_debugger_file(FILE *f, const struct asmstate *state, const struct line *lines);
 
 #endif

@@ -15,6 +15,8 @@
 #define die(...) do { fprintf(stderr, __VA_ARGS__); exit(1); } while(0)
 #endif
 
+#define ARRLEN(arr) (sizeof(arr)/sizeof(*(arr)))
+
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 64
 #define CPU_CLOCK_FREQ 2457600 // 2.4576 MHz
@@ -350,7 +352,7 @@ static const char *string_from_port_bit(uint8_t port, uint8_t bit, uint8_t dir) 
     if ((port == (VAL)) && (dir & (DIR)) && (bit == 7)) return #B7; \
     /*end*/
     PC8201_PORTS(X)
-
+#undef X
     return "UnknownPortBit";
 }
 
@@ -360,6 +362,7 @@ static void mem_cb(Vm_8085 *vm, uint16_t addr, bool is_write, uint8_t *in_out_da
 
     if (is_write) {
         memory_write(&mach->mem, addr, *in_out_data);
+        assert(memory_read(&mach->mem, addr) == *in_out_data);
     }
     else {
         *in_out_data = memory_read(&mach->mem, addr);
@@ -1006,7 +1009,28 @@ DECL_EXPORT DebuggerLoc *get_source_map_ptr(void) {
 #include <stdint.h>
 #include <stdbool.h>
 
+typedef struct {
+    int x, y, w, h; /* Bottom-up OpenGL viewport coordinates (y = 0 at bottom) */
+} IntRect;
 
+typedef struct {
+    float x, y, w, h;
+} FloatRect;
+
+static inline bool PointInsideFloatRect(float x, float y, FloatRect rect) {
+    return x >= rect.x && x < rect.x + rect.w
+        && y >= rect.y && y < rect.y + rect.h;
+}
+
+typedef struct {
+    bool debugger_enabled;
+    float lcd_top_ratio;   /* Fraction of window height reserved for top LCD area, e.g. 0.28f */
+    IntRect lcd_rect;
+    IntRect code_rect;
+} Layout;
+
+#include "gl.h"
+#include "debugger.c"
 
 static void handle_sdl_key(const SDL_KeyboardEvent *event) {
     //      col0 col1 col2 col3 col4 col5 col6 col7
@@ -1192,62 +1216,6 @@ const char* fragment_shader_src =
     "    fragColor = vec4(finalColor, 1.0);\n"
     "}\n";
 
-#define GL_FUNC_LIST(X) \
-    X(PFNGLCREATESHADERPROC,            CreateShader) \
-    X(PFNGLSHADERSOURCEPROC,            ShaderSource) \
-    X(PFNGLCOMPILESHADERPROC,           CompileShader) \
-    X(PFNGLGETSHADERIVPROC,             GetShaderiv) \
-    X(PFNGLGETSHADERINFOLOGPROC,        GetShaderInfoLog) \
-    X(PFNGLCREATEPROGRAMPROC,           CreateProgram) \
-    X(PFNGLATTACHSHADERPROC,            AttachShader) \
-    X(PFNGLLINKPROGRAMPROC,             LinkProgram) \
-    X(PFNGLGETPROGRAMIVPROC,            GetProgramiv) \
-    X(PFNGLUSEPROGRAMPROC,              UseProgram) \
-    X(PFNGLGENBUFFERSPROC,              GenBuffers) \
-    X(PFNGLBINDBUFFERPROC,              BindBuffer) \
-    X(PFNGLBUFFERDATAPROC,              BufferData) \
-    X(PFNGLGENVERTEXARRAYSPROC,         GenVertexArrays) \
-    X(PFNGLBINDVERTEXARRAYPROC,         BindVertexArray) \
-    X(PFNGLGETATTRIBLOCATIONPROC,       GetAttribLocation) \
-    X(PFNGLVERTEXATTRIBPOINTERPROC,     VertexAttribPointer) \
-    X(PFNGLENABLEVERTEXATTRIBARRAYPROC, EnableVertexAttribArray) \
-    X(PFNGLGETUNIFORMLOCATIONPROC,      GetUniformLocation) \
-    X(PFNGLUNIFORM1IPROC,               Uniform1i) \
-    X(PFNGLUNIFORM2FPROC,               Uniform2f) \
-    X(PFNGLUNIFORM3FPROC,               Uniform3f) \
-    X(PFNGLUNIFORM4FPROC,               Uniform4f) \
-    X(PFNGLACTIVETEXTUREPROC,           ActiveTexture) \
-    /*end*/
-
-#define GL_FUNC_STRUCT_DECL(type, name) type name;
-
-struct {
-    GL_FUNC_LIST(GL_FUNC_STRUCT_DECL)
-} gl;
-
-bool load_gl_extensions() {
-    #define GL_FUNC_LOAD(type, name) \
-        gl.name = (type)SDL_GL_GetProcAddress("gl" #name); \
-        if (!gl.name) { SDL_Log("Failed to load gl" #name); return false; }
-
-    GL_FUNC_LIST(GL_FUNC_LOAD)
-
-    return true;
-}
-
-GLuint compile_shader(GLenum type, const char* src) {
-    GLuint shader = gl.CreateShader(type);
-    gl.ShaderSource(shader, 1, &src, NULL);
-    gl.CompileShader(shader);
-    GLint success;
-    gl.GetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char info[512];
-        gl.GetShaderInfoLog(shader, 512, NULL, info);
-        SDL_Log("Shader compilation failed: %s", info);
-    }
-    return shader;
-}
 
 #define SAMPLE_RATE 22050
 
@@ -1301,7 +1269,51 @@ uint8_t *read_entire_file(const char *path, size_t *out_size) {
     return data;
 }
 
-#include "sdl_debugger.c"
+static void compute_layout(Layout *layout, int window_w, int window_h) {
+    if (window_w < 1) window_w = 1;
+    if (window_h < 1) window_h = 1;
+
+    if (!layout->debugger_enabled) {
+        /* Normal mode: letterboxed LCD centered across the full window */
+        float scale_w = (float)window_w / (float)SCREEN_WIDTH;
+        float scale_h = (float)window_h / (float)SCREEN_HEIGHT;
+        float scale = (scale_w < scale_h) ? scale_w : scale_h;
+
+        int vw = (int)((float)SCREEN_WIDTH * scale);
+        int vh = (int)((float)SCREEN_HEIGHT * scale);
+
+        layout->lcd_rect.w = vw;
+        layout->lcd_rect.h = vh;
+        layout->lcd_rect.x = (window_w - vw) / 2;
+        layout->lcd_rect.y = (window_h - vh) / 2;
+
+        layout->code_rect = (IntRect){0, 0, 0, 0};
+        return;
+    }
+
+    /* Debugger mode: LCD at TOP of window, source viewer fills BOTTOM */
+    int top_band_h = (int)((float)window_h * layout->lcd_top_ratio);
+    if (top_band_h < SCREEN_HEIGHT) {
+        top_band_h = (SCREEN_HEIGHT < window_h) ? SCREEN_HEIGHT : window_h;
+    }
+    int bottom_band_h = window_h - top_band_h;
+    if (bottom_band_h < 0) bottom_band_h = 0;
+
+    /* Letterbox LCD inside the top band, centered horizontally and vertically in that band */
+    float scale_w = (float)window_w / (float)SCREEN_WIDTH;
+    float scale_h = (float)top_band_h / (float)SCREEN_HEIGHT;
+    float scale = (scale_w < scale_h) ? scale_w : scale_h;
+    if (scale <= 0.0f) scale = 1.0f;
+
+    int lcd_w = (int)((float)SCREEN_WIDTH * scale);
+    int lcd_h = (int)((float)SCREEN_HEIGHT * scale);
+    int lcd_x = (window_w - lcd_w) / 2;
+    /* Top of screen in GL coords is window_h; top band sits from (window_h - top_band_h) to window_h */
+    int lcd_y = (window_h - top_band_h) + (top_band_h - lcd_h) / 2;
+
+    layout->lcd_rect = (IntRect){lcd_x, lcd_y, lcd_w, lcd_h};
+    layout->code_rect = (IntRect){0, 0, window_w, bottom_band_h};
+}
 
 #define arg_shift(argc, argv) ((argc) > 0 ? (--(argc), *(argv)++) : NULL)
 
@@ -1312,6 +1324,7 @@ int main(int argc, char* argv[]) {
 
     const char *co_file_path = NULL;
     const char *rom_file_path = NULL;
+    const char *dbg_map_path = NULL;
 
     while (argc > 0) {
         const char *arg = arg_shift(argc, argv);
@@ -1331,6 +1344,12 @@ int main(int argc, char* argv[]) {
         else if (strcmp(arg, "co-file") == 0) {
             if (!(co_file_path = arg_shift(argc, argv))) {
                 SDL_Log("Missing argument <CO File path>.\n");
+                return 1;
+            }
+        }
+        else if (strcmp(arg, "dbg-map") == 0) {
+            if (!(dbg_map_path = arg_shift(argc, argv))) {
+                SDL_Log("Missing argument <Debug map file path>.\n");
                 return 1;
             }
         }
@@ -1423,31 +1442,36 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    Dbg dbg = {0};
+    if (dbg_map_path) {
+        dbg_init(&dbg, &machine, dbg_map_path);
+    }
+
     GLuint vs = compile_shader(GL_VERTEX_SHADER, vertex_shader_src);
     GLuint fs = compile_shader(GL_FRAGMENT_SHADER, fragment_shader_src);
-    GLuint shaderProgram = gl.CreateProgram();
-    gl.AttachShader(shaderProgram, vs);
-    gl.AttachShader(shaderProgram, fs);
-    gl.LinkProgram(shaderProgram);
-    gl.UseProgram(shaderProgram);
+    GLuint shaderProgram = glCreateProgram();
+    glAttachShader(shaderProgram, vs);
+    glAttachShader(shaderProgram, fs);
+    glLinkProgram(shaderProgram);
+    glUseProgram(shaderProgram);
 
     GLuint VAO, VBO;
-    gl.GenVertexArrays(1, &VAO);
-    gl.GenBuffers(1, &VBO);
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
 
     float full_screen_quad[] = {-1.0f, -1.0f, 1.0f, -1.0f, -1.0f,  1.0f, 1.0f,  1.0f};
-    gl.BindVertexArray(VAO);
-    gl.BindBuffer(GL_ARRAY_BUFFER, VBO);
-    gl.BufferData(GL_ARRAY_BUFFER, sizeof(full_screen_quad), full_screen_quad, GL_STATIC_DRAW);
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(full_screen_quad), full_screen_quad, GL_STATIC_DRAW);
 
-    GLint posAttrib = gl.GetAttribLocation(shaderProgram, "a_position");
-    gl.EnableVertexAttribArray(posAttrib);
-    gl.VertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    GLint posAttrib = glGetAttribLocation(shaderProgram, "a_position");
+    glEnableVertexAttribArray(posAttrib);
+    glVertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
 
     // Texture Setup
     GLuint texture;
     glGenTextures(1, &texture);
-    gl.ActiveTexture(GL_TEXTURE0);
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
 
     // GL_NEAREST ensures the shader accurately calculates pixel locations
@@ -1460,18 +1484,16 @@ int main(int argc, char* argv[]) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCREEN_WIDTH, SCREEN_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 
     // Set Static Uniforms
-    gl.Uniform1i(gl.GetUniformLocation(shaderProgram, "u_image"), 0);
-    gl.Uniform2f(gl.GetUniformLocation(shaderProgram, "u_resolution"), (float)SCREEN_WIDTH + 4, (float)SCREEN_HEIGHT + 4);
+    glUniform1i(glGetUniformLocation(shaderProgram, "u_image"), 0);
+    glUniform2f(glGetUniformLocation(shaderProgram, "u_resolution"), (float)SCREEN_WIDTH + 4, (float)SCREEN_HEIGHT + 4);
 
     // Define standard LCD greenish/gray colors for the shader
-    gl.Uniform3f(gl.GetUniformLocation(shaderProgram, "u_colorBg"),     168.f/255.f, 172.0f/255.f, 164.f/255.f);
-    gl.Uniform3f(gl.GetUniformLocation(shaderProgram, "u_colorPixel"),   41.f/255.f,  42.0f/255.f,  40.f/255.f);
-    gl.Uniform3f(gl.GetUniformLocation(shaderProgram, "u_colorShadow"), 129.f/255.f, 130.0f/255.f, 124.f/255.f);
+    glUniform3f(glGetUniformLocation(shaderProgram, "u_colorBg"),     168.f/255.f, 172.0f/255.f, 164.f/255.f);
+    glUniform3f(glGetUniformLocation(shaderProgram, "u_colorPixel"),   41.f/255.f,  42.0f/255.f,  40.f/255.f);
+    glUniform3f(glGetUniformLocation(shaderProgram, "u_colorShadow"), 129.f/255.f, 130.0f/255.f, 124.f/255.f);
 
-    MonoTextRenderer text_renderer = {0};
-    if (!init_mono_text(&text_renderer)) {
-        return 1;
-    }
+    Layout layout = {0};
+    layout.lcd_top_ratio = 0.25;
 
     bool running = true;
     SDL_Event event;
@@ -1486,8 +1508,20 @@ int main(int argc, char* argv[]) {
             }
             else if (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP) {
                 if (!event.key.repeat) {
-                    handle_sdl_key(&event.key);
+                    if (event.key.key == SDLK_F12 && event.type == SDL_EVENT_KEY_DOWN) {
+                        layout.debugger_enabled = !layout.debugger_enabled;
+                    }
+                    else {
+                        handle_sdl_key(&event.key);
+                    }
                 }
+            }
+            else if (layout.debugger_enabled && layout.code_rect.h > 0) {
+                int win_w = 0, win_h = 0;
+                SDL_GetWindowSizeInPixels(window, &win_w, &win_h);
+                float code_top_y = (float)(win_h - (layout.code_rect.y + layout.code_rect.h));
+                FloatRect area = { layout.code_rect.x, code_top_y, layout.code_rect.w, layout.code_rect.h };
+                dbg_handle_event(&dbg, &event, area);
             }
         }
 
@@ -1509,53 +1543,42 @@ int main(int argc, char* argv[]) {
         int window_w, window_h;
         SDL_GetWindowSizeInPixels(window, &window_w, &window_h);
 
-        // Calculate the letterboxed viewport dimensions
-        float scale_w = (float)window_w / SCREEN_WIDTH;
-        float scale_h = (float)window_h / SCREEN_HEIGHT;
-        float scale = (scale_w < scale_h) ? scale_w : scale_h;
-
-        int viewport_w = (int)(SCREEN_WIDTH * scale);
-        int viewport_h = (int)(SCREEN_HEIGHT * scale);
-        int viewport_x = (window_w - viewport_w) / 2;
-        int viewport_y = (window_h - viewport_h) / 2;
-
-        // Apply the letterboxed viewport
-        glViewport(viewport_x, viewport_y, viewport_w, viewport_h);
+        compute_layout(&layout, window_w, window_h);
 
         // Clear the ENTIRE window to black before drawing the restricted viewport
         // (We enable the scissor test briefly to clear outside the glViewport boundaries)
         glDisable(GL_SCISSOR_TEST);
+        glViewport(0, 0, window_w, window_h);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // Update AA width uniformly based on the single letterbox scale factor
-        gl.Uniform2f(gl.GetUniformLocation(shaderProgram, "u_aaWidth"), 1.0f / scale, 1.0f / scale);
+        // Draw emulated LCD in its target viewport
+        float lcd_scale = (float)layout.lcd_rect.w / (float)SCREEN_WIDTH;
+        if (lcd_scale <= 0.0f) lcd_scale = 1.0f;
 
+        glViewport(layout.lcd_rect.x, layout.lcd_rect.y, layout.lcd_rect.w, layout.lcd_rect.h);
+
+        glUseProgram(shaderProgram);
+        glUniform2f(glGetUniformLocation(shaderProgram, "u_aaWidth"), 1.0f / lcd_scale, 1.0f / lcd_scale);
+
+        glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texture);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, get_canvas_buffer());
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT,
+                        GL_RGBA, GL_UNSIGNED_BYTE, get_canvas_buffer());
 
-        gl.UseProgram(shaderProgram);
-        gl.BindVertexArray(VAO);
+        glBindVertexArray(VAO);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-        // Switch back to full window for debug overlay text
-        glViewport(0, 0, window_w, window_h);
+        if (layout.debugger_enabled && layout.code_rect.h > 0) {
+            glViewport(layout.code_rect.x, layout.code_rect.y, layout.code_rect.w, layout.code_rect.h);
+            dbg_draw_source(&dbg, (float)layout.code_rect.w, (float)layout.code_rect.h);
+        }
 
-        // Example source / debugger text in top-left corner
-        draw_mono_text(
-            &text_renderer,
-            "0100 ORG 08000H\n0101 LD A,01H\n0102 OUT (00H),A",
-            12.0f,
-            12.0f,
-            2.0f, // 16x16 px per character at scale 2.0
-            window_w,
-            window_h,
-            0.2f, 1.0f, 0.4f, 1.0f
-        );
-
-        SDL_GL_SwapWindow(window);    }
+        SDL_GL_SwapWindow(window);
+    }
 
     // Cleanup
+    dbg_free(&dbg);
     SDL_GL_DestroyContext(gl_context);
     SDL_DestroyWindow(window);
     SDL_Quit();

@@ -592,7 +592,7 @@ static void op_rim(Vm_8085 *vm) {
 
 #define SET_PC(V) do { \
     uint16_t new_pc = (V); \
-    printf("PC = ...\n"); \
+    (void)("PC = ...\n"); \
     vm->pc = new_pc; \
 } while(0)
 

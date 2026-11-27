@@ -258,3 +258,145 @@ void write_json_debugger_file(FILE *f, const struct asmstate *state, const struc
 
     fprintf(f, "}\n");
 }
+
+
+
+
+
+
+static bool write_u16_le(FILE *f, uint16_t v) {
+    uint8_t b[2] = { (uint8_t)(v & 0xFFu), (uint8_t)((v >> 8) & 0xFFu) };
+    return fwrite(b, 1, 2, f) == 2;
+}
+
+static bool write_u32_le(FILE *f, uint32_t v) {
+    uint8_t b[4] = {
+        (uint8_t)(v & 0xFFu),
+        (uint8_t)((v >> 8) & 0xFFu),
+        (uint8_t)((v >> 16) & 0xFFu),
+        (uint8_t)((v >> 24) & 0xFFu)
+    };
+    return fwrite(b, 1, 4, f) == 4;
+}
+
+static uint8_t *read_file_bytes_alloc(const char *filepath, uint32_t *out_len) {
+    *out_len = 0;
+    if (!filepath) return NULL;
+
+    FILE *sf = fopen(filepath, "rb");
+    if (!sf) return NULL;
+
+    if (fseek(sf, 0, SEEK_END) != 0) { fclose(sf); return NULL; }
+    long sz = ftell(sf);
+    if (sz <= 0) { fclose(sf); return NULL; }
+    rewind(sf);
+
+    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
+    if (!buf) { fclose(sf); return NULL; }
+
+    size_t got = fread(buf, 1, (size_t)sz, sf);
+    fclose(sf);
+
+    if (got != (size_t)sz) {
+        free(buf);
+        return NULL;
+    }
+
+    *out_len = (uint32_t)got;
+    return buf;
+}
+
+bool write_bin_debugger_file(FILE *f, const struct asmstate *state, const struct line *lines) {
+    if (!f || !lines) return false;
+
+    const char *unique_files[256];
+    uint32_t num_files = 0;
+    uint32_t mapping_count = 0;
+
+    /* Pass 1: collect unique filenames and count address mappings */
+    for (const struct line *line = lines; line != NULL; line = line->next_line) {
+        if (line->info.lineno == 0 || line->info.filename == NULL) continue;
+
+        bool found = false;
+        for (uint32_t i = 0; i < num_files; ++i) {
+            if (strcmp(unique_files[i], line->info.filename) == 0) {
+                found = true;
+                break;
+            }
+        }
+        if (!found && num_files < 256u) {
+            unique_files[num_files++] = line->info.filename;
+        }
+
+        if (line->n_bytes > 0) {
+            mapping_count += (uint32_t)line->n_bytes;
+        }
+    }
+
+    uint32_t symbol_count = 0;
+    struct variable *v_first = NULL;
+    if (state && state->knowns) {
+        for (struct variable *v = state->knowns->variables; v != NULL; v = v->next) {
+            symbol_count++;
+            v_first = v;
+        }
+    }
+
+    /* Header */
+    char magic[4] = "8085";
+    const uint32_t format_version = 1;
+    if (fwrite(magic, 1, 4, f) != 4) return false;
+    if (!write_u32_le(f, format_version)) return false;
+    if (!write_u32_le(f, num_files)) return false;
+    if (!write_u32_le(f, mapping_count)) return false;
+    if (!write_u32_le(f, symbol_count)) return false;
+
+    /* Section 1: Files + embedded source bytes */
+    for (uint32_t i = 0; i < num_files; ++i) {
+        const char *path = unique_files[i];
+        uint32_t path_len = (uint32_t)strlen(path);
+
+        uint32_t content_len = 0;
+        uint8_t *content = read_file_bytes_alloc(path, &content_len);
+
+        if (!write_u32_le(f, path_len)) { free(content); return false; }
+        if (path_len > 0 && fwrite(path, 1, path_len, f) != path_len) { free(content); return false; }
+        if (!write_u32_le(f, content_len)) { free(content); return false; }
+        if (content_len > 0 && fwrite(content, 1, content_len, f) != content_len) {
+            free(content);
+            return false;
+        }
+        free(content);
+    }
+
+    /* Section 2: (address, file_id, line_index) */
+    for (const struct line *line = lines; line != NULL; line = line->next_line) {
+        if (line->info.lineno == 0 || line->info.filename == NULL || line->n_bytes <= 0) continue;
+
+        uint16_t file_id = 0;
+        for (uint32_t j = 0; j < num_files; ++j) {
+            if (strcmp(unique_files[j], line->info.filename) == 0) {
+                file_id = (uint16_t)j;
+                break;
+            }
+        }
+
+        uint16_t line_index = (uint16_t)(line->info.lineno - 1);
+        for (int b = 0; b < line->n_bytes; ++b) {
+            uint16_t addr = (uint16_t)(line->location + b);
+            if (!write_u16_le(f, addr)) return false;
+            if (!write_u16_le(f, file_id)) return false;
+            if (!write_u16_le(f, line_index)) return false;
+        }
+    }
+
+    /* Section 3: Symbols */
+    for (struct variable *v = v_first; v != NULL; v = v->prev) {
+        uint16_t name_len = (uint16_t)strlen(v->name);
+        if (!write_u16_le(f, name_len)) return false;
+        if (name_len > 0 && fwrite(v->name, 1, name_len, f) != name_len) return false;
+        if (!write_u16_le(f, (uint16_t)v->value)) return false;
+    }
+
+    return true;
+}
